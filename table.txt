@@ -1,0 +1,200 @@
+You are given a task to integrate an existing React component in the codebase
+
+The codebase should support:
+- shadcn project structure  
+- Tailwind CSS
+- Typescript
+
+If it doesn't, provide instructions on how to setup project via shadcn CLI, install Tailwind or Typescript.
+
+Determine the default path for components and styles. 
+If default path for components is not /components/ui, provide instructions on why it's important to create this folder
+Copy-paste this component to /components/ui folder:
+```tsx
+type-table.tsx
+"use client"
+
+import * as React from "react"
+import { InfoIcon } from "lucide-react"
+import Link from "next/link"
+import { cn } from "@/lib/utils"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+
+interface TypeTableProps extends React.HTMLAttributes<HTMLDivElement> {
+  type: Record<string, {
+    description?: React.ReactNode
+    type: string
+    typeDescription?: React.ReactNode
+    typeDescriptionLink?: string
+    default?: string
+  }>
+}
+
+function Info({ children }: { children: React.ReactNode }) {
+  return (
+    <Popover>
+      <PopoverTrigger>
+        <InfoIcon className="size-4" />
+      </PopoverTrigger>
+      <PopoverContent className="prose max-h-[400px] min-w-[220px] max-w-[400px] overflow-auto text-sm prose-no-margin">
+        {children}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+export function TypeTable({ type, className, ...props }: TypeTableProps) {
+  return (
+    <div 
+      className={cn(
+        "prose my-6 overflow-auto prose-no-margin rounded-xl border bg-background",
+        className
+      )}
+      {...props}
+    >
+      <table className="w-full whitespace-nowrap text-sm text-muted-foreground">
+        <thead className="border-b bg-muted/50">
+          <tr>
+            <th className="w-[45%] p-4 text-left">Prop</th>
+            <th className="w-[30%] p-4 text-left border-l">Type</th>
+            <th className="w-1/4 p-4 text-left border-l">Default</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(type).map(([key, value]) => (
+            <tr key={key} className="border-b last:border-0">
+              <td className="p-4">
+                <div className="inline-flex flex-row items-center gap-1">
+                  <code className="rounded-md bg-primary/10 p-1 text-primary">
+                    {key}
+                  </code>
+                  {value.description && <Info>{value.description}</Info>}
+                </div>
+              </td>
+              <td className="p-4 border-l">
+                <div className="inline-flex flex-row items-center gap-1">
+                  <code className="rounded-md bg-secondary p-1 text-secondary-foreground">
+                    {value.type}
+                  </code>
+                  {value.typeDescription && <Info>{value.typeDescription}</Info>}
+                  {value.typeDescriptionLink && (
+                    <Link href={value.typeDescriptionLink}>
+                      <InfoIcon className="size-4" />
+                    </Link>
+                  )}
+                </div>
+              </td>
+              <td className="p-4 border-l">
+                {value.default ? (
+                  <code className="rounded-md bg-secondary p-1 text-secondary-foreground">
+                    {value.default}
+                  </code>
+                ) : (
+                  <span>-</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+demo.tsx
+import { TypeTable } from "@/components/ui/type-table"
+
+function TypeTableDemo() {
+  return (
+    <TypeTable
+      type={{
+        percentage: {
+          description: "The percentage of scroll position to display the roll button",
+          type: "number",
+          default: "0.2"
+        }
+      }}
+      className="min-w-[400px]"
+    />
+  )
+}
+
+export { TypeTableDemo }
+```
+
+Copy-paste these files for dependencies:
+```tsx
+shadcn/popover
+"use client"
+
+import * as React from "react"
+import * as PopoverPrimitive from "@radix-ui/react-popover"
+
+import { cn } from "@/lib/utils"
+
+const Popover = PopoverPrimitive.Root
+
+const PopoverTrigger = PopoverPrimitive.Trigger
+
+const PopoverContent = React.forwardRef<
+  React.ElementRef<typeof PopoverPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
+>(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
+  <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Content
+      ref={ref}
+      align={align}
+      sideOffset={sideOffset}
+      className={cn(
+        "z-50 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        className
+      )}
+      {...props}
+    />
+  </PopoverPrimitive.Portal>
+))
+PopoverContent.displayName = PopoverPrimitive.Content.displayName
+
+export { Popover, PopoverTrigger, PopoverContent }
+
+```
+
+Install NPM dependencies:
+```bash
+lucide-react, @radix-ui/react-popover
+```
+
+Extend existing globals.css with this code:
+```css
+@layer base {
+  :root {
+    --primary: 220deg 91% 54%;
+  }
+
+  .dark {
+    --primary: 217deg 92% 76%;
+  }
+}
+
+```
+
+Implementation Guidelines
+ 1. Analyze the component structure and identify all required dependencies
+ 2. Review the component's argumens and state
+ 3. Identify any required context providers or hooks and install them
+ 4. Questions to Ask
+ - What data/props will be passed to this component?
+ - Are there any specific state management requirements?
+ - Are there any required assets (images, icons, etc.)?
+ - What is the expected responsive behavior?
+ - What is the best place to use this component in the app?
+
+Steps to integrate
+ 0. Copy paste all the code above in the correct directories
+ 1. Install external dependencies
+ 2. Fill image assets with Unsplash stock images you know exist
+ 3. Use lucide-react icons for svgs or logos if component requires them

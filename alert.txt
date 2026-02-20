@@ -1,0 +1,367 @@
+You are given a task to integrate an existing React component in the codebase
+
+The codebase should support:
+- shadcn project structure  
+- Tailwind CSS
+- Typescript
+
+If it doesn't, provide instructions on how to setup project via shadcn CLI, install Tailwind or Typescript.
+
+Determine the default path for components and styles. 
+If default path for components is not /components/ui, provide instructions on why it's important to create this folder
+Copy-paste this component to /components/ui folder:
+```tsx
+alert-toast.tsx
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils"; // Your utility for merging class names
+import {
+  CheckCircle2,
+  AlertTriangle,
+  Info,
+  XOctagon,
+  X,
+} from "lucide-react";
+
+// Define variants for the alert toast using cva
+const alertToastVariants = cva(
+  "relative w-full max-w-sm overflow-hidden rounded-lg shadow-lg flex items-start p-4 space-x-4",
+  {
+    variants: {
+      variant: {
+        success: "",
+        warning: "",
+        info: "",
+        error: "",
+      },
+      styleVariant: {
+        default: "bg-background border",
+        filled: "",
+      },
+    },
+    compoundVariants: [
+      {
+        variant: "success",
+        styleVariant: "default",
+        className: "text-success-foreground border-green-200 dark:border-green-700",
+      },
+      {
+        variant: "warning",
+        styleVariant: "default",
+        className: "text-warning-foreground border-yellow-200 dark:border-yellow-700",
+      },
+      {
+        variant: "info",
+        styleVariant: "default",
+        className: "text-info-foreground border-blue-200 dark:border-blue-700",
+      },
+      {
+        variant: "error",
+        styleVariant: "default",
+        className: "text-destructive-foreground border-red-200 dark:border-red-700",
+      },
+      {
+        variant: "success",
+        styleVariant: "filled",
+        className: "bg-success text-success-foreground",
+      },
+      {
+        variant: "warning",
+        styleVariant: "filled",
+        className: "bg-warning text-warning-foreground",
+      },
+      {
+        variant: "info",
+        styleVariant: "filled",
+        className: "bg-info text-info-foreground",
+      },
+      {
+        variant: "error",
+        styleVariant: "filled",
+        className: "bg-destructive text-destructive-foreground",
+      },
+    ],
+    defaultVariants: {
+      variant: "info",
+      styleVariant: "default",
+    },
+  }
+);
+
+// Define icon map for different variants
+const iconMap = {
+  success: CheckCircle2,
+  warning: AlertTriangle,
+  info: Info,
+  error: XOctagon,
+};
+
+// Define icon color classes
+const iconColorClasses: Record<string, Record<string, string>> = {
+    default: {
+        success: "text-green-500",
+        warning: "text-yellow-500",
+        info: "text-blue-500",
+        error: "text-red-500",
+    },
+    filled: {
+        success: "text-success-foreground",
+        warning: "text-warning-foreground",
+        info: "text-info-foreground",
+        error: "text-destructive-foreground",
+    },
+};
+
+
+export interface AlertToastProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof alertToastVariants> {
+  /** The title of the alert. */
+  title: string;
+  /** A more detailed description for the alert. */
+  description: string;
+  /** A function to call when the alert is dismissed. */
+  onClose: () => void;
+}
+
+const AlertToast = React.forwardRef<HTMLDivElement, AlertToastProps>(
+  ({ className, variant = 'info', styleVariant = 'default', title, description, onClose, ...props }, ref) => {
+    const Icon = iconMap[variant];
+
+    return (
+      <motion.div
+        ref={ref}
+        role="alert"
+        layout
+        initial={{ opacity: 0, y: 50, scale: 0.3 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 20, scale: 0.5 }}
+        transition={{
+          type: "spring",
+          stiffness: 260,
+          damping: 20,
+        }}
+        className={cn(alertToastVariants({ variant, styleVariant }), className)}
+        {...props}
+      >
+        {/* Icon */}
+        <div className="flex-shrink-0">
+          <Icon className={cn("h-6 w-6", iconColorClasses[styleVariant][variant])} aria-hidden="true" />
+        </div>
+
+        {/* Content */}
+        <div className="flex-1">
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="text-sm opacity-90">{description}</p>
+        </div>
+        
+        {/* Close Button */}
+        <div className="flex-shrink-0">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className={cn(
+              "p-1 rounded-full opacity-80 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2",
+               styleVariant === 'default' ? "text-foreground/70 hover:bg-muted" : "hover:bg-black/20"
+            )}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
+);
+
+AlertToast.displayName = "AlertToast";
+
+export { AlertToast, alertToastVariants };
+
+demo.tsx
+import * as React from "react";
+import { AlertToast } from "@/components/ui/alert-toast"; // Adjust the import path
+import { Button } from "@/components/ui/button";
+import { AnimatePresence } from "framer-motion";
+
+const initialAlerts = [
+  { id: 1, styleVariant: 'filled', variant: 'success', title: 'Payment processed', description: 'Transaction ID: #f4402' },
+  { id: 2, styleVariant: 'filled', variant: 'warning', title: 'Connection failed', description: 'Check your Internet connection' },
+  { id: 3, styleVariant: 'filled', variant: 'info', title: 'Update available', description: 'Version 2.1.0 ready to install' },
+  { id: 4, styleVariant: 'filled', variant: 'error', title: 'Something went wrong', description: 'Please try again later' },
+  { id: 5, styleVariant: 'default', variant: 'success', title: 'Payment processed', description: 'Transaction ID: #f4402' },
+  { id: 6, styleVariant: 'default', variant: 'warning', title: 'Connection failed', description: 'Check your Internet connection' },
+  { id: 7, styleVariant: 'default', variant: 'info', title: 'Update available', description: 'Version 2.1.0 ready to install' },
+  { id: 8, styleVariant: 'default', variant: 'error', title: 'Something went wrong', description: 'Please try again later' },
+] as const;
+
+
+export default function AlertToastDemo() {
+  const [alerts, setAlerts] = React.useState(initialAlerts);
+
+  const handleClose = (id: number) => {
+    setAlerts((prevAlerts) => prevAlerts.filter((alert) => alert.id !== id));
+  };
+
+  const resetAlerts = () => {
+    setAlerts(initialAlerts);
+  }
+
+  return (
+    <div className="w-full space-y-8">
+       <div className="flex justify-center">
+            <Button onClick={resetAlerts} disabled={alerts.length === initialAlerts.length}>
+                Reset Alerts
+            </Button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 place-items-center">
+            {/* Filled Style Column */}
+            <div className="space-y-4 w-full max-w-sm">
+                <AnimatePresence>
+                {alerts
+                    .filter(a => a.styleVariant === 'filled')
+                    .map(({ id, variant, title, description, styleVariant }) => (
+                    <AlertToast
+                        key={id}
+                        variant={variant}
+                        styleVariant={styleVariant}
+                        title={title}
+                        description={description}
+                        onClose={() => handleClose(id)}
+                    />
+                    ))}
+                </AnimatePresence>
+            </div>
+            
+            {/* Default Style Column */}
+            <div className="space-y-4 w-full max-w-sm">
+                <AnimatePresence>
+                {alerts
+                    .filter(a => a.styleVariant === 'default')
+                    .map(({ id, variant, title, description, styleVariant }) => (
+                    <AlertToast
+                        key={id}
+                        variant={variant}
+                        styleVariant={styleVariant}
+                        title={title}
+                        description={description}
+                        onClose={() => handleClose(id)}
+                    />
+                    ))}
+                </AnimatePresence>
+            </div>
+        </div>
+    </div>
+  );
+}
+```
+
+Copy-paste these files for dependencies:
+```tsx
+shadcn/button
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline:
+          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-10 px-4 py-2",
+        sm: "h-9 rounded-md px-3",
+        lg: "h-11 rounded-md px-8",
+        icon: "h-10 w-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  },
+)
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+}
+
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button"
+    return (
+      <Comp
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        {...props}
+      />
+    )
+  },
+)
+Button.displayName = "Button"
+
+export { Button, buttonVariants }
+
+```
+
+Install NPM dependencies:
+```bash
+lucide-react, framer-motion, class-variance-authority, @radix-ui/react-slot
+```
+
+Extend existing Tailwind 4 index.css with this code (or if project uses Tailwind 3, extend tailwind.config.js or globals.css):
+```css
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --warning: 48 96% 59%;
+  --warning-foreground: 48 96% 5%;
+  --success: 142.1 76.2% 36.3%;
+  --success-foreground: 142.1 76.2% 95%;
+  --info: 215 91% 54%;
+  --info-foreground: 215 91% 95%;
+}
+
+.dark {
+  --warning: 48 96% 59%;
+  --warning-foreground: 48 96% 5%;
+  --success: 142.1 76.2% 36.3%;
+  --success-foreground: 142.1 76.2% 95%;
+  --info: 215 91% 54%;
+  --info-foreground: 215 91% 95%;
+}
+
+```
+
+Implementation Guidelines
+ 1. Analyze the component structure and identify all required dependencies
+ 2. Review the component's argumens and state
+ 3. Identify any required context providers or hooks and install them
+ 4. Questions to Ask
+ - What data/props will be passed to this component?
+ - Are there any specific state management requirements?
+ - Are there any required assets (images, icons, etc.)?
+ - What is the expected responsive behavior?
+ - What is the best place to use this component in the app?
+
+Steps to integrate
+ 0. Copy paste all the code above in the correct directories
+ 1. Install external dependencies
+ 2. Fill image assets with Unsplash stock images you know exist
+ 3. Use lucide-react icons for svgs or logos if component requires them

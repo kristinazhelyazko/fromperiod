@@ -1,0 +1,20 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --only=production || npm install --only=production
+
+# Копируем только то, что нужно для веб-сервера
+COPY server.js ./server.js
+COPY routes ./routes
+COPY public ./public
+COPY config ./config
+COPY utils ./utils
+COPY migrations ./migrations
+
+ENV NODE_ENV=production
+EXPOSE 3000
+
+# Прогоняем миграции перед стартом сервера (идемпотентно)
+CMD ["sh","-c","node migrations/run.js && node server.js"]

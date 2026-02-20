@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log*
+logs
+*.log
+combined.log
+error.log
+.git
+.env
+frontend/node_modules
+backend/node_modules
+.DS_Store
