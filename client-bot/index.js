@@ -40,9 +40,11 @@ async function start() {
 
     const options = {};
     if (webAppUrl && webAppUrl.startsWith('https://')) {
+      const base = webAppUrl.replace(/\/$/, '');
+      const appUrl = `${base}?chat_id=${chatId}`;
       options.reply_markup = {
         inline_keyboard: [
-          [{ text: 'Перейти в приложение', web_app: { url: webAppUrl } }],
+          [{ text: 'Перейти в приложение', web_app: { url: appUrl } }],
         ],
       };
     } else if (webAppUrl) {

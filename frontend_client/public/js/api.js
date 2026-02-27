@@ -1,7 +1,7 @@
 const API_BASE_URL =
   (window.__API_BASE_URL__ && window.__API_BASE_URL__.trim())
     ? window.__API_BASE_URL__.replace(/\/$/, '')
-    : 'http://localhost:3004/api';
+    : (window.location.origin.replace(/\/$/, '') + '/api');
 
 async function apiRequest(endpoint, options = {}) {
   try {

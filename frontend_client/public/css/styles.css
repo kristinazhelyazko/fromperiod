@@ -965,16 +965,30 @@ input[type="number"] {
 }
 
 .cart-button {
-    width: 36px;
+    min-width: 36px;
     height: 36px;
-    border-radius: 18px;
+    padding: 0 22px;
+    border-radius: 10px;
     border: 1px solid var(--mustard);
     background-color: #FBFBF9;
     display: flex;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
+    gap: 4px;
     font-size: 18px;
     cursor: pointer;
+}
+
+.cart-count-badge {
+    display: none;
+    border: 1px solid var(--mustard);
+    border-radius: 8px;
+    padding: 2px 5px;
+    font-family: 'Room-Regular', sans-serif;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--dark-green, #333);
 }
 
 #replenish-items .subtitle { 

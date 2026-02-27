@@ -12,6 +12,9 @@ COPY public ./public
 COPY config ./config
 COPY utils ./utils
 COPY migrations ./migrations
+COPY services ./services
+COPY elements ./elements
+COPY save.txt ./save.txt
 
 ENV NODE_ENV=production
 EXPOSE 3000

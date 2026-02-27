@@ -9,5 +9,6 @@ COPY utils ./utils
 COPY migrations ./migrations
 COPY routes ./routes
 COPY public ./public
+COPY elements ./elements
 ENV NODE_ENV=production
 CMD ["node","bot/index.js"]

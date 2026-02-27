@@ -13,7 +13,11 @@ const allowedOrigins = [
   'http://localhost:3001',
   'http://localhost:3004',
   'http://localhost:3005',
-  process.env.WEB_APP_URL && process.env.WEB_APP_URL.replace(/\/$/, '')
+  'https://fromperiod.ru',
+  process.env.WEB_APP_URL && process.env.WEB_APP_URL.replace(/\/$/, ''),
+  process.env.WEB_APP_CLIENT_URL && process.env.WEB_APP_CLIENT_URL.replace(/\/$/, ''),
+  'https://web.telegram.org',
+  'https://web.telegram.org/'
 ].filter(Boolean);
 
 app.use(cors({
@@ -22,7 +26,8 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
-  }
+  },
+  credentials: true
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

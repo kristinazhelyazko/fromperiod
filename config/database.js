@@ -9,8 +9,11 @@ function resolveSslOption() {
   return process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
 }
 
-const connectionString =
-  (envResult.parsed && envResult.parsed.DATABASE_URL) || process.env.DATABASE_URL;
+const connectionString = (() => {
+  const raw =
+    (envResult.parsed && envResult.parsed.DATABASE_URL) || process.env.DATABASE_URL || '';
+  return String(raw).trim().replace(/\}+$/, '').trim();
+})();
 
 const pool = new Pool({
   connectionString,

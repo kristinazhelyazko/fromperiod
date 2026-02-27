@@ -6,7 +6,7 @@ const logger = require('../../utils/logger');
 router.get('/', async (req, res, next) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, price, image_path FROM catalog_item ORDER BY id'
+      'SELECT id, name, price, image_path FROM catalog_item WHERE is_visible = TRUE ORDER BY id'
     );
     res.json(result.rows);
   } catch (error) {

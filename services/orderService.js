@@ -627,6 +627,15 @@ async function getCatalogImagePathById(catalogItemId) {
   const res = await pool.query('SELECT image_path FROM catalog_item WHERE id = $1', [id]);
   return res.rows[0] ? res.rows[0].image_path : null;
 }
+
+async function getCatalogPriceById(catalogItemId) {
+  const id = parseInt(catalogItemId, 10);
+  if (!Number.isFinite(id)) return null;
+  const res = await pool.query('SELECT price FROM catalog_item WHERE id = $1', [id]);
+  const row = res.rows[0];
+  if (!row || row.price == null) return null;
+  return Number(row.price);
+}
 async function getOrderWithDetails(orderId) {
   const otCheck = await pool.query(`SELECT to_regclass('ordertype') IS NOT NULL AS exists`);
   const hasOt = !!(otCheck.rows[0] && otCheck.rows[0].exists);
@@ -634,6 +643,7 @@ async function getOrderWithDetails(orderId) {
     const res = await pool.query(
       `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.status,
               o.creator_full_name,
+              o.cost,
               o.total_cost,
               o.paid_amount,
               ps.name AS payment_status_name,
@@ -661,6 +671,7 @@ async function getOrderWithDetails(orderId) {
     const res = await pool.query(
       `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.status,
               o.creator_full_name,
+              o.cost,
               o.total_cost,
               o.paid_amount,
               ps.name AS payment_status_name,
@@ -713,6 +724,10 @@ async function acceptOrdersByNumber(number) {
   await pool.query('UPDATE orders SET status = $1 WHERE number = $2', ['accepted', number]);
 }
 
+async function updateOrderPaidAmount(orderId, amount) {
+  await pool.query('UPDATE orders SET paid_amount = $1, updated_at = NOW() WHERE id = $2', [Number(amount) || 0, orderId]);
+}
+
 async function updateOrderDeliveryCost(orderId, cost) {
   await pool.query(
     `UPDATE order_details
@@ -729,7 +744,9 @@ async function getOrdersByNumber(number) {
             o.fulfillment_type,
             o.execution_date,
             o.execution_time,
+            o.execution_time_to,
             o.status,
+            o.cost,
             o.total_cost,
             o.paid_amount,
             a.name AS address_name,
@@ -812,6 +829,7 @@ module.exports = {
   findAddressIdByName,
   getAddressNameById,
   getCatalogImagePathById,
+  getCatalogPriceById,
   deleteOrder,
   findPaymentStatusIdByName,
   findOrderTypeIdByName,
@@ -823,6 +841,7 @@ module.exports = {
   deleteOrderPhotos,
   getOrderPhotosCount,
   updateOrderDeliveryCost,
+  updateOrderPaidAmount,
   getOrdersByNumber,
   generateOrderNumber,
 };

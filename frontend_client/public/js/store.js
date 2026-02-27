@@ -8,7 +8,7 @@ const storeState = {
 const STORE_IMG_BASE =
   (window.__IMG_BASE_URL__ && window.__IMG_BASE_URL__.trim())
     ? window.__IMG_BASE_URL__.replace(/\/$/, '')
-    : 'http://localhost:3004';
+    : 'https://fromperiod.ru';
 
 async function initStore() {
   try {
@@ -37,11 +37,12 @@ async function selectStoreAddress(addressId, addressName) {
 
   try {
     const items = await apiRequest('/catalog');
+    // image_path храним как относительный путь из БД (/elements/...), а полный URL собираем при отрисовке
     storeState.items = items.map((item) => ({
       id: item.id,
       name: item.name,
       price: item.price,
-      image_path: STORE_IMG_BASE + item.image_path,
+      image_path: item.image_path,
       qty: 0,
     }));
     renderCatalog();
@@ -49,6 +50,19 @@ async function selectStoreAddress(addressId, addressName) {
   } catch (error) {
     console.error('Ошибка загрузки каталога:', error);
     showStoreNotification('Ошибка загрузки каталога. Попробуйте позже.');
+  }
+}
+
+function updateCartBadge() {
+  const totalQty = storeState.items.reduce((sum, item) => sum + (item.qty || 0), 0);
+  const badge = document.getElementById('cart-count-badge');
+  if (!badge) return;
+  if (totalQty > 0) {
+    badge.textContent = String(totalQty);
+    badge.style.display = 'inline-block';
+  } else {
+    badge.textContent = '';
+    badge.style.display = 'none';
   }
 }
 
@@ -64,7 +78,7 @@ function renderCatalog() {
     imgWrapper.className = 'catalog-image-wrapper';
     const img = document.createElement('img');
     img.className = 'catalog-image';
-    img.src = item.image_path;
+    img.src = STORE_IMG_BASE + item.image_path;
     img.alt = item.name;
     imgWrapper.appendChild(img);
 
@@ -110,6 +124,7 @@ function renderCatalog() {
 
     list.appendChild(card);
   });
+  updateCartBadge();
 }
 
 function updateItemQty(index, newQty) {
@@ -157,7 +172,7 @@ function renderCart() {
     imgWrapper.className = 'cart-item-image-wrapper';
     const img = document.createElement('img');
     img.className = 'cart-item-image';
-    img.src = item.image_path;
+    img.src = STORE_IMG_BASE + item.image_path;
     img.alt = item.name;
     imgWrapper.appendChild(img);
 
@@ -913,7 +928,7 @@ async function confirmCheckout() {
       catalogItemId: ci.id,
       catalogItemName: ci.name,
       catalogItemPrice: ci.price,
-      imagePath: ci.image_path,
+      imagePath: ci.image_path, // относительный путь /elements/..., на бэкенде конвертируется в нужный вид
       fulfillmentType: isDelivery ? 'delivery' : 'pickup',
       executionDate,
       fromHour,
@@ -1015,8 +1030,31 @@ function formatPrice(value) {
 function getTelegramChatId() {
   try {
     const tg = window.Telegram && window.Telegram.WebApp;
-    if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-      return String(tg.initDataUnsafe.user.id);
+    if (tg) {
+      // 1) Предпочтительно: готовый объект от Telegram (есть при открытии из inline-кнопки)
+      if (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+        return String(tg.initDataUnsafe.user.id);
+      }
+      // 2) Запасной вариант: парсим сырую строку initData (часто есть, когда initDataUnsafe пустой)
+      const raw = typeof tg.initData === 'string' ? tg.initData.trim() : '';
+      if (raw) {
+        const params = new URLSearchParams(raw);
+        const userStr = params.get('user');
+        if (userStr) {
+          try {
+            const user = JSON.parse(decodeURIComponent(userStr));
+            if (user && typeof user.id === 'number') return String(user.id);
+          } catch (_) {}
+        }
+      }
+    }
+    // 3) Клиентский бот передаёт chat_id в URL при открытии (надёжно, если initData пустой)
+    const urlParams = typeof window !== 'undefined' && window.location && window.location.search
+      ? new URLSearchParams(window.location.search)
+      : null;
+    const fromUrl = urlParams && urlParams.get('chat_id');
+    if (fromUrl && /^\d+$/.test(String(fromUrl).trim())) {
+      return String(fromUrl).trim();
     }
   } catch (e) {
     console.error('Ошибка получения chat id Telegram:', e);

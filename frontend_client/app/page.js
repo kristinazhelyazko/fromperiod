@@ -47,6 +47,7 @@ export default function StorePage() {
               className="cart-button"
               onClick={() => window.openCart && window.openCart()}
             >
+              <span id="cart-count-badge" className="cart-count-badge" style={{ display: "none" }}></span>
               <img
                 src="/pocket.png"
                 alt="Корзина"

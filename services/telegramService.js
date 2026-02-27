@@ -110,6 +110,52 @@ async function sendToChannel(channelId, message, options = {}) {
   }
 }
 
+async function sendToClientChat(chatId, message, options = {}) {
+  const maxRetries = 3;
+  const targetId = String(chatId);
+  const token = process.env.TELEGRAM_CLIENT_BOT_TOKEN;
+  if (!token) {
+    logger.error('TELEGRAM_CLIENT_BOT_TOKEN not set, cannot send message to client chat');
+    return;
+  }
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const body = { chat_id: targetId, text: message, ...options };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        const err = new Error(`HTTP ${res.status} ${txt}`);
+        err.response = { body: { parameters: {} } };
+        throw err;
+      }
+      const json = await res.json();
+      logger.info(`Message sent to client chat ${targetId} via HTTP`);
+      return json.result;
+    } catch (error) {
+      const retrySec = getRetryAfterSeconds(error);
+      if (retrySec && attempt < maxRetries) {
+        const waitMs = (retrySec + 1) * 1000;
+        logger.warn(`Rate limited for client chat ${targetId}, retry after ${retrySec}s (attempt ${attempt + 1}/${maxRetries})`);
+        await wait(waitMs);
+        continue;
+      }
+      if (isTransientNetworkError(error) && attempt < maxRetries) {
+        const delay = Math.min(15000, 2000 * Math.pow(2, attempt));
+        logger.warn(`Network error sending message to client ${targetId}. Retrying in ${Math.round(delay/1000)}s (attempt ${attempt + 1}/${maxRetries})`);
+        await wait(delay);
+        continue;
+      }
+      logger.error(`Error sending message to client chat ${targetId}:`, error);
+      throw error;
+    }
+  }
+}
+
 async function sendDocumentToChannel(channelId, document, options = {}) {
   const bot = getBot();
   const maxRetries = 3;
@@ -267,55 +313,102 @@ async function sendPhotoToChannel(channelId, fileId, options = {}) {
   }
 }
 
-async function sendMediaGroupToChannel(channelId, fileIds = [], options = {}) {
-  const bot = getBot();
+async function sendPhotoToClientChat(chatId, imagePathOrUrl, options = {}) {
   const maxRetries = 3;
-  const chunkSize = 10;
-  const mediaChunks = [];
-  let targetId = channelId;
-  for (let i = 0; i < fileIds.length; i += chunkSize) {
-    const chunk = fileIds.slice(i, i + chunkSize).map(fid => ({ type: 'photo', media: fid }));
-    mediaChunks.push(chunk);
+  const targetId = String(chatId);
+  const token = process.env.TELEGRAM_CLIENT_BOT_TOKEN;
+  if (!token) {
+    logger.error('TELEGRAM_CLIENT_BOT_TOKEN not set, cannot send photo to client chat');
+    return;
   }
-  for (const chunk of mediaChunks) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        if (bot && bot.sendMediaGroup) {
-          await bot.sendMediaGroup(targetId, chunk, options);
-          logger.info(`Media group (${chunk.length}) sent to channel ${targetId}`);
-        } else {
-          for (const m of chunk) {
-            await sendPhotoToChannel(targetId, m.media, { caption: options && options.caption });
-          }
-          logger.info(`Media group (${chunk.length}) sent as individual photos to channel ${targetId}`);
+  const raw = String(imagePathOrUrl || '').trim();
+  if (!raw) return;
+  const isHttpUrl = /^https?:\/\//i.test(raw);
+  const looksLikeLocalPath =
+    !isHttpUrl &&
+    (raw.startsWith('/') || raw.startsWith('./') || raw.startsWith('../') || raw.includes('\\') || /^[A-Za-z]:[\\/]/.test(raw));
+
+  const url = `https://api.telegram.org/bot${token}/sendPhoto`;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      if (looksLikeLocalPath) {
+        let filePath = raw;
+        if (!path.isAbsolute(filePath)) {
+          const rootDir = path.join(__dirname, '..');
+          filePath = path.join(rootDir, filePath.replace(/^\/+/, ''));
         }
-        break;
-      } catch (error) {
-        const retrySec = getRetryAfterSeconds(error);
-        if (retrySec && attempt < maxRetries) {
-          const waitMs = (retrySec + 1) * 1000;
-          logger.warn(`Rate limited for channel ${targetId} (media group), retry after ${retrySec}s (attempt ${attempt + 1}/${maxRetries})`);
-          await wait(waitMs);
-          continue;
+        const data = await fs.promises.readFile(filePath);
+        const ext = path.extname(filePath) || '.jpg';
+        const form = new FormData();
+        form.append('chat_id', targetId);
+        form.append('photo', new Blob([data]), `photo${ext}`);
+        if (options && options.caption) form.append('caption', options.caption);
+        const res = await fetch(url, { method: 'POST', body: form });
+        if (!res.ok) {
+          const txt = await res.text();
+          const err = new Error(`HTTP ${res.status} ${txt}`);
+          err.response = { body: { parameters: {} } };
+          throw err;
         }
-        try {
-          const mig = error && error.response && error.response.body && error.response.body.parameters && error.response.body.parameters.migrate_to_chat_id;
-          if (mig && attempt < maxRetries) {
-            const newId = String(mig);
-            logger.warn(`Channel ${targetId} migrated to ${newId}`);
-            targetId = newId;
-            continue;
-          }
-        } catch (_) {}
-        if (isTransientNetworkError(error) && attempt < maxRetries) {
-          const delay = Math.min(15000, 2000 * Math.pow(2, attempt));
-          logger.warn(`Network error sending media group to ${targetId}. Retrying in ${Math.round(delay/1000)}s (attempt ${attempt + 1}/${maxRetries})`);
-          await wait(delay);
-          continue;
-        }
-        logger.error(`Error sending media group to channel ${targetId}:`, error);
-        throw error;
+        const json = await res.json();
+        logger.info(`Photo sent to client chat ${targetId} via HTTP (file upload)`);
+        return json.result;
       }
+      const photoUrl = isHttpUrl ? raw : `https://fromperiod.ru/${raw.replace(/^\/+/, '')}`;
+      const body = { chat_id: targetId, photo: photoUrl, ...options };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        const err = new Error(`HTTP ${res.status} ${txt}`);
+        err.response = { body: { parameters: {} } };
+        throw err;
+      }
+      const json = await res.json();
+      logger.info(`Photo sent to client chat ${targetId} via HTTP (url)`);
+      return json.result;
+    } catch (error) {
+      const retrySec = getRetryAfterSeconds(error);
+      if (retrySec && attempt < maxRetries) {
+        const waitMs = (retrySec + 1) * 1000;
+        logger.warn(`Rate limited for client photo ${targetId}, retry after ${retrySec}s (attempt ${attempt + 1}/${maxRetries})`);
+        await wait(waitMs);
+        continue;
+      }
+      if (isTransientNetworkError(error) && attempt < maxRetries) {
+        const delay = Math.min(15000, 2000 * Math.pow(2, attempt));
+        logger.warn(`Network error sending photo to client ${targetId}. Retrying in ${Math.round(delay/1000)}s (attempt ${attempt + 1}/${maxRetries})`);
+        await wait(delay);
+        continue;
+      }
+      logger.error(`Error sending photo to client chat ${targetId}:`, error);
+      throw error;
+    }
+  }
+}
+
+async function sendMediaGroupToChannel(channelId, fileIds = [], options = {}) {
+  // Отправляем каждое фото по отдельности, используя уже отлаженную логику sendPhotoToChannel.
+  const uniqueIds = Array.from(new Set(fileIds || [])).filter(Boolean);
+  for (const fid of uniqueIds) {
+    try {
+      await sendPhotoToChannel(channelId, fid, options);
+    } catch (error) {
+      logger.error(`Error sending photo from media group to channel ${channelId}:`, error);
+    }
+  }
+}
+
+async function sendMediaGroupToClientChat(chatId, fileIds = [], options = {}) {
+  const uniqueIds = Array.from(new Set(fileIds || [])).filter(Boolean);
+  for (const fid of uniqueIds) {
+    try {
+      await sendPhotoToClientChat(chatId, fid, options);
+    } catch (error) {
+      logger.error(`Error sending photo from media group to client chat ${chatId}:`, error);
     }
   }
 }
@@ -378,8 +471,11 @@ module.exports = {
   initializeBot,
   getBot,
   sendToChannel,
+  sendToClientChat,
   editMessageInChannel,
   sendDocumentToChannel,
   sendPhotoToChannel,
   sendMediaGroupToChannel,
+  sendPhotoToClientChat,
+  sendMediaGroupToClientChat,
 };

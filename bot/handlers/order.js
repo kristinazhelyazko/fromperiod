@@ -14,7 +14,14 @@ const {
   getInterruptOrderKeyboard,
 } = require('../keyboards');
 const orderService = require('../../services/orderService');
-const { sendToChannel, editMessageInChannel, sendPhotoToChannel, sendMediaGroupToChannel } = require('../../services/telegramService');
+const {
+  sendToChannel,
+  editMessageInChannel,
+  sendPhotoToChannel,
+  sendMediaGroupToChannel,
+  sendToClientChat,
+  sendMediaGroupToClientChat,
+} = require('../../services/telegramService');
 const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '-1003345446030';
 const ORDER_CHANNEL_MAP = {
   'Белгород': '-1003868788094',
@@ -245,6 +252,35 @@ function formatMoney(val) {
   return n.toFixed(2);
 }
 
+function computeOrderTotalCost(orders) {
+  let total = 0;
+  for (const o of orders) {
+    const det = o.details || {};
+    const positionCost = Number(o.cost ?? det.catalog_item_price ?? 0);
+    const isDelivery = String(o.fulfillment_type || '') === 'delivery';
+    const deliveryCost = isDelivery ? Number(det.delivery_cost || 0) : 0;
+    total += positionCost + deliveryCost;
+  }
+  return total;
+}
+
+async function sendOrderAcceptPaymentStep(bot, chatId, groupNumber, orders) {
+  const totalCost = computeOrderTotalCost(orders);
+  const lines = [
+    'В каком размере был оплачен заказ?',
+    '',
+    `Итоговая стоимость по заказу №${groupNumber}: ${formatMoney(totalCost)} ₽`,
+  ];
+  await bot.sendMessage(chatId, lines.join('\n'), {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Оплачен полностью', callback_data: 'order_accept_paid_full' }, { text: 'Частично', callback_data: 'order_accept_paid_partial' }],
+        [{ text: 'Не оплачен', callback_data: 'order_accept_paid_none' }],
+      ],
+    },
+  });
+}
+
 async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) {
   const summaryLines = [];
   let totalFlowers = 0;
@@ -256,23 +292,29 @@ async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) 
   for (const o of orders) {
     const det = o.details || {};
     const isDelivery = String(o.fulfillment_type || '') === 'delivery';
-    const baseCost = Number(o.total_cost || 0);
+    const positionCost = Number(o.cost ?? det.catalog_item_price ?? 0);
     const deliveryCost = isDelivery ? Number(det.delivery_cost || 0) : 0;
-    totalFlowers += baseCost;
+    totalFlowers += positionCost;
     totalDelivery += deliveryCost;
     summaryLines.push('');
     summaryLines.push(`Позиция ID ${o.id}:`);
     if (det.catalog_item_name) summaryLines.push(`Наименование: ${det.catalog_item_name}`);
     summaryLines.push(`Тип: ${isDelivery ? 'Доставка' : 'Самовывоз'}`);
     if (o.execution_date) summaryLines.push(`Дата: ${formatDateRu(o.execution_date)}`);
-    if (o.execution_time) summaryLines.push(`Время: ${formatTimeHM(o.execution_time)}`);
+    if (o.execution_time) {
+      if (o.execution_time_to) {
+        summaryLines.push(`Время: с ${formatTimeHM(o.execution_time)} по ${formatTimeHM(o.execution_time_to)}`);
+      } else {
+        summaryLines.push(`Время: ${formatTimeHM(o.execution_time)}`);
+      }
+    }
     if (isDelivery) {
       if (o.recipient_name) summaryLines.push(`Получатель: ${o.recipient_name}`);
       if (o.recipient_phone) summaryLines.push(`Телефон получателя: ${o.recipient_phone}`);
       if (o.recipient_address) summaryLines.push(`Адрес доставки: ${o.recipient_address}`);
       summaryLines.push(`Стоимость доставки: ${formatMoney(deliveryCost)} ₽`);
     }
-    summaryLines.push(`Стоимость позиции: ${formatMoney(baseCost)} ₽`);
+    summaryLines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
   }
   summaryLines.push('');
   summaryLines.push(`Общая стоимость цветов: ${formatMoney(totalFlowers)} ₽`);
@@ -280,14 +322,28 @@ async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) 
   summaryLines.push(`Общая стоимость заказа: ${formatMoney(totalFlowers + totalDelivery)} ₽`);
   const header = `Заказ №${groupNumber} переведен в статус Принят`;
   const fullText = [header, '', ...summaryLines].join('\n');
-  await bot.sendMessage(chatId, fullText);
+  const TELEGRAM_MSG_MAX = 4096;
+  const sendLongText = async (targetId, text, sendFn) => {
+    if (!text || !String(text).trim()) return;
+    const str = String(text);
+    if (str.length <= TELEGRAM_MSG_MAX) {
+      await sendFn(targetId, str);
+      return;
+    }
+    for (let i = 0; i < str.length; i += TELEGRAM_MSG_MAX) {
+      const chunk = str.slice(i, i + TELEGRAM_MSG_MAX);
+      await sendFn(targetId, chunk);
+    }
+  };
+  const sendToChat = (id, t) => bot.sendMessage(id, t);
+  await sendLongText(chatId, fullText, sendToChat);
   const addrName = first.address_name || '';
   const direct = resolveChannelForStore(addrName);
   const fallback = process.env.ORDER_CHANNEL_ID || process.env.REPORT_CHANNEL_ID;
   const addrChannel = direct || fallback || '';
   if (addrChannel && isValidChannelId(addrChannel)) {
     try {
-      await sendToChannel(addrChannel, fullText);
+      await sendLongText(addrChannel, fullText, sendToChannel);
     } catch (e) {
       logger.error('Send accepted order to address channel error', e);
     }
@@ -302,12 +358,17 @@ async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) 
   }
   if (clientChatId) {
     try {
-      await sendToChannel(String(clientChatId), fullText);
+      const hasPickup = orders.some(o => String(o.fulfillment_type || '') !== 'delivery');
+      const clientMessage = hasPickup
+        ? fullText + '\n\nПри получении заказа назовите номер вашего заказа✨'
+        : fullText;
+      await sendLongText(String(clientChatId), clientMessage, (id, t) => sendToClientChat(id, t));
     } catch (e) {
       logger.error('Send accepted order to client error', e);
     }
   }
   const media = [];
+  const clientMedia = [];
   for (const o of orders) {
     const fidList = (Array.isArray(o.photos) ? o.photos : []).filter(Boolean);
     for (const fid of fidList) {
@@ -324,6 +385,9 @@ async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) 
         if (localPath) {
           media.push(localPath);
         }
+        if (imgPath) {
+          clientMedia.push(imgPath);
+        }
       } catch (e) {
         logger.error('Error getting web_app catalog photo for accepted order', e);
       }
@@ -336,11 +400,16 @@ async function sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders) 
       if (addrChannel && isValidChannelId(addrChannel)) {
         await sendMediaGroupToChannel(addrChannel, uniqueMedia);
       }
-      if (clientChatId) {
-        await sendMediaGroupToChannel(String(clientChatId), uniqueMedia);
-      }
     } catch (e) {
       logger.error('Error sending accepted order photos', e);
+    }
+  }
+  if (clientChatId && clientMedia.length > 0) {
+    const uniqueClientMedia = Array.from(new Set(clientMedia));
+    try {
+      await sendMediaGroupToClientChat(String(clientChatId), uniqueClientMedia);
+    } catch (e) {
+      logger.error('Error sending accepted order photos to client', e);
     }
   }
 }
@@ -624,24 +693,27 @@ async function handleCallback(bot, ctx, data) {
           if (detObj2 && detObj2.comment) {
             lines.push(`Комментарий: ${detObj2.comment}`);
           }
-          if (typeof ord.total_cost !== 'undefined') {
-            const tc2 = Number(ord.total_cost || 0);
-            const pa2 = Number(ord.paid_amount || 0);
-            const rem2 = Math.max(tc2 - pa2, 0);
-            if ((ord.fulfillment_type || '') === 'delivery') {
-              const dc2 = (detObj2 && typeof detObj2.delivery_cost !== 'undefined') ? Number(detObj2.delivery_cost || 0) : undefined;
-              if (typeof dc2 !== 'undefined') {
-                lines.push(`Стоимость доставки: ${formatMoney(dc2)} ₽`);
-              }
-              if (typeof detObj2.delivery_paid !== 'undefined') {
-                lines.push(`Оплата доставки: ${detObj2.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-              }
-            }
-            lines.push(`Стоимость позиции: ${formatMoney(tc2)} ₽`);
-            if (ord.payment_status_name) lines.push(`Статус оплаты: ${ord.payment_status_name}`);
-            lines.push(`Оплачено: ${formatMoney(pa2)} ₽`);
-            lines.push(`Остаток: ${formatMoney(rem2)} ₽`);
+          let positionCost = Number(ord.cost ?? 0);
+          if (positionCost === 0 && detObj2 && detObj2.source === 'web_app' && detObj2.catalog_item_id) {
+            const catalogPrice = await orderService.getCatalogPriceById(detObj2.catalog_item_id);
+            if (catalogPrice != null) positionCost = catalogPrice;
           }
+          if (positionCost === 0) positionCost = Number(detObj2.catalog_item_price ?? 0);
+          const pa2 = Number(ord.paid_amount || 0);
+          const rem2 = Math.max(positionCost - pa2, 0);
+          if ((ord.fulfillment_type || '') === 'delivery') {
+            const dc2 = (detObj2 && typeof detObj2.delivery_cost !== 'undefined') ? Number(detObj2.delivery_cost || 0) : undefined;
+            if (typeof dc2 !== 'undefined') {
+              lines.push(`Стоимость доставки: ${formatMoney(dc2)} ₽`);
+            }
+            if (typeof detObj2.delivery_paid !== 'undefined') {
+              lines.push(`Оплата доставки: ${detObj2.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+            }
+          }
+          lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+          if (ord.payment_status_name) lines.push(`Статус оплаты: ${ord.payment_status_name}`);
+          lines.push(`Оплачено: ${formatMoney(pa2)} ₽`);
+          lines.push(`Остаток: ${formatMoney(rem2)} ₽`);
           lines.push(`Контакты:`);
           lines.push(`Клиент: ${ord.client_name}, ${ord.client_phone}`);
           if (ord.fulfillment_type !== 'pickup') {
@@ -742,24 +814,27 @@ async function handleCallback(bot, ctx, data) {
         if (detObj && detObj.comment) {
           lines.push(`Комментарий: ${detObj.comment}`);
         }
-        if (typeof o.total_cost !== 'undefined') {
-          const tc = Number(o.total_cost || 0);
-          const pa = Number(o.paid_amount || 0);
-          const rem = Math.max(tc - pa, 0);
-          if ((o.fulfillment_type || '') === 'delivery') {
-            const dc = (detObj && typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
-            if (typeof dc !== 'undefined') {
-              lines.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
-            }
-            if (typeof detObj.delivery_paid !== 'undefined') {
-              lines.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-            }
-          }
-          lines.push(`Стоимость: ${formatMoney(tc)} ₽`);
-          if (o.payment_status_name) lines.push(`Статус оплаты: ${o.payment_status_name}`);
-          lines.push(`Оплачено: ${formatMoney(pa)} ₽`);
-          lines.push(`Остаток: ${formatMoney(rem)} ₽`);
+        let positionCost = Number(o.cost ?? 0);
+        if (positionCost === 0 && detObj && detObj.source === 'web_app' && detObj.catalog_item_id) {
+          const catalogPrice = await orderService.getCatalogPriceById(detObj.catalog_item_id);
+          if (catalogPrice != null) positionCost = catalogPrice;
         }
+        if (positionCost === 0) positionCost = Number(detObj.catalog_item_price ?? 0);
+        const pa = Number(o.paid_amount || 0);
+        const rem = Math.max(positionCost - pa, 0);
+        if ((o.fulfillment_type || '') === 'delivery') {
+          const dc = (detObj && typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
+          if (typeof dc !== 'undefined') {
+            lines.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
+          }
+          if (typeof detObj.delivery_paid !== 'undefined') {
+            lines.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+          }
+        }
+        lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+        if (o.payment_status_name) lines.push(`Статус оплаты: ${o.payment_status_name}`);
+        lines.push(`Оплачено: ${formatMoney(pa)} ₽`);
+        lines.push(`Остаток: ${formatMoney(rem)} ₽`);
         lines.push(`Контакты:`);
         lines.push(`Клиент: ${o.client_name}, ${o.client_phone}`);
         if (o.fulfillment_type !== 'pickup') {
@@ -826,8 +901,69 @@ async function handleCallback(bot, ctx, data) {
           }
         }
       }
+    } else if (data === 'order_accept_paid_full' || data === 'order_accept_paid_partial' || data === 'order_accept_paid_none') {
+      const stPay = getUserState(userId);
+      if ((stPay || {}).state !== 'order_accept_payment_choice') {
+        await bot.sendMessage(chatId, 'Сессия устарела. Выберите заказ заново в управлении заказами.');
+        return;
+      }
+      const dPay = stPay.data || {};
+      const ordersPay = Array.isArray(dPay.orders) ? dPay.orders : [];
+      const groupNum = dPay.group_number;
+      if (!ordersPay.length || !groupNum) {
+        await bot.sendMessage(chatId, 'Данные заказа не найдены.');
+        clearUserState(userId);
+        setUserState(userId, 'authenticated', { user: dPay.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
+        return;
+      }
+      const hasInvalidOrder = ordersPay.some(ord => ord == null || (ord.id === undefined || ord.id === null));
+      if (hasInvalidOrder) {
+        logger.error('order_accept_payment: order without id', { groupNum, ordersPay: ordersPay.map(o => ({ id: o && o.id })) });
+        await bot.sendMessage(chatId, 'Данные заказа повреждены. Попробуйте выбрать заказ заново.');
+        return;
+      }
+      if (data === 'order_accept_paid_partial') {
+        setUserState(userId, 'order_accept_paid_amount', { user: dPay.user, group_number: groupNum, orders: ordersPay });
+        await bot.sendMessage(chatId, 'Какая сумма была внесена?');
+        return;
+      }
+      try {
+        if (data === 'order_accept_paid_full') {
+          for (const ord of ordersPay) {
+            const det = ord.details || {};
+            const posCost = Number(ord.cost ?? det.catalog_item_price ?? 0);
+            const isDel = String(ord.fulfillment_type || '') === 'delivery';
+            const delCost = isDel ? Number(det.delivery_cost || 0) : 0;
+            const orderId = ord.id != null ? Number(ord.id) : null;
+            if (orderId != null && Number.isFinite(orderId)) {
+              await orderService.updateOrderPaidAmount(orderId, posCost + delCost);
+            }
+          }
+        } else {
+          for (const ord of ordersPay) {
+            const orderId = ord.id != null ? Number(ord.id) : null;
+            if (orderId != null && Number.isFinite(orderId)) {
+              await orderService.updateOrderPaidAmount(orderId, 0);
+            }
+          }
+        }
+        await orderService.acceptOrdersByNumber(groupNum);
+        await sendOrderAcceptedNotifications(bot, chatId, groupNum, ordersPay);
+        clearUserState(userId);
+        setUserState(userId, 'authenticated', { user: dPay.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
+        const rightsName = dPay.user && dPay.user.rights_name;
+        if (rightsName) {
+          await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
+        }
+      } catch (err) {
+        logger.error('order_accept_payment_choice error', { message: err.message, stack: err.stack, groupNum });
+        throw err;
+      }
     } else if (data.startsWith('order_accept_')) {
       const id = parseInt(data.replace('order_accept_', ''), 10);
+      if (!Number.isFinite(id)) {
+        return;
+      }
       const o = await orderService.getOrderWithDetails(id);
       if (!o) {
         await bot.sendMessage(chatId, 'Заказ не найден.');
@@ -861,15 +997,12 @@ async function handleCallback(bot, ctx, data) {
       }
       const deliveryPositions = orders.filter(x => String(x.fulfillment_type || '') === 'delivery');
       if (!deliveryPositions.length) {
-        await orderService.acceptOrdersByNumber(groupNumber);
-        await sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders);
-        const stCurrent3 = getUserState(userId);
-        const userObj3 = (stCurrent3 && stCurrent3.data && stCurrent3.data.user) || (st && st.data && st.data.user);
-        clearUserState(userId);
-        if (userObj3) {
-          setUserState(userId, 'authenticated', { user: userObj3, auth_expires_at: Date.now() + 30 * 60 * 1000 });
-          await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(userObj3.rights_name));
-        }
+        setUserState(userId, 'order_accept_payment_choice', {
+          user: st.data.user,
+          group_number: groupNumber,
+          orders,
+        });
+        await sendOrderAcceptPaymentStep(bot, chatId, groupNumber, orders);
         return;
       }
       const dataState = {
@@ -1083,24 +1216,22 @@ async function handleCallback(bot, ctx, data) {
         } else if (detObj.card_text) {
           lines2.push(`Открытка: ${detObj.card_text}`);
         }
-        if (typeof o.total_cost !== 'undefined') {
-          const tc = Number(o.total_cost || 0);
-          const pa = Number(o.paid_amount || 0);
-          const rem = Math.max(tc - pa, 0);
-          if ((o.fulfillment_type || '') === 'delivery') {
-            const dc = (typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
-            if (typeof dc !== 'undefined') {
-              lines2.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
-            }
-            if (typeof detObj.delivery_paid !== 'undefined') {
-              lines2.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-            }
+        const positionCost = Number(o.cost ?? detObj.catalog_item_price ?? 0);
+        const pa = Number(o.paid_amount || 0);
+        const rem = Math.max(positionCost - pa, 0);
+        if ((o.fulfillment_type || '') === 'delivery') {
+          const dc = (typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
+          if (typeof dc !== 'undefined') {
+            lines2.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
           }
-          lines2.push(`Стоимость: ${formatMoney(tc)} ₽`);
-          if (o.payment_status_name) lines2.push(`Статус оплаты: ${o.payment_status_name}`);
-          lines2.push(`Оплачено: ${formatMoney(pa)} ₽`);
-          lines2.push(`Остаток: ${formatMoney(rem)} ₽`);
+          if (typeof detObj.delivery_paid !== 'undefined') {
+            lines2.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+          }
         }
+        lines2.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+        if (o.payment_status_name) lines2.push(`Статус оплаты: ${o.payment_status_name}`);
+        lines2.push(`Оплачено: ${formatMoney(pa)} ₽`);
+        lines2.push(`Остаток: ${formatMoney(rem)} ₽`);
         lines2.push(`Контакты:`);
         lines2.push(`Клиент: ${o.client_name}, ${o.client_phone}`);
         if (o.fulfillment_type !== 'pickup') {
@@ -1738,14 +1869,39 @@ async function handleOrderMessage(bot, msg) {
         await bot.sendMessage(chatId, lines.join('\n'));
       } else {
         const groupNumber = data.group_number;
-        await orderService.acceptOrdersByNumber(groupNumber);
-        await sendOrderAcceptedNotifications(bot, chatId, groupNumber, orders);
+        setUserState(userId, 'order_accept_payment_choice', {
+          user: data.user,
+          group_number: groupNumber,
+          orders,
+        });
+        await sendOrderAcceptPaymentStep(bot, chatId, groupNumber, orders);
+      }
+    } else if (st.state === 'order_accept_paid_amount') {
+      const res = parseMoney(msg.text);
+      if (!res.ok) {
+        await bot.sendMessage(chatId, `❌ ${res.message}\nВведите сумму, которая была внесена:`);
+        return;
+      }
+      const data = st.data || {};
+      const orders = Array.isArray(data.orders) ? data.orders : [];
+      const groupNum = data.group_number;
+      if (!orders.length || !groupNum) {
+        await bot.sendMessage(chatId, 'Данные заказа не найдены.');
         clearUserState(userId);
         setUserState(userId, 'authenticated', { user: data.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
-        const rightsName = data.user && data.user.rights_name;
-        if (rightsName) {
-          await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
-        }
+        return;
+      }
+      await orderService.updateOrderPaidAmount(orders[0].id, res.value);
+      for (let i = 1; i < orders.length; i++) {
+        await orderService.updateOrderPaidAmount(orders[i].id, 0);
+      }
+      await orderService.acceptOrdersByNumber(groupNum);
+      await sendOrderAcceptedNotifications(bot, chatId, groupNum, orders);
+      clearUserState(userId);
+      setUserState(userId, 'authenticated', { user: data.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
+      const rightsName = data.user && data.user.rights_name;
+      if (rightsName) {
+        await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
       }
     } else if (st.state === 'order_delivery_cost') {
       const res = parseMoney(msg.text);
@@ -2020,24 +2176,22 @@ async function handleConfirmOrEdit(bot, ctx, data) {
             } else if (detObj.card_text) {
               lines2.push(`Открытка: ${detObj.card_text}`);
             }
-            if (typeof o.total_cost !== 'undefined') {
-              const tc = Number(o.total_cost || 0);
-              const pa = Number(o.paid_amount || 0);
-              const rem = Math.max(tc - pa, 0);
-              if ((o.fulfillment_type || '') === 'delivery') {
-                const dc = (typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
-                if (typeof dc !== 'undefined') {
-                  lines2.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
-                }
-                if (typeof detObj.delivery_paid !== 'undefined') {
-                  lines2.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-                }
+            const positionCost = Number(o.cost ?? detObj.catalog_item_price ?? 0);
+            const pa = Number(o.paid_amount || 0);
+            const rem = Math.max(positionCost - pa, 0);
+            if ((o.fulfillment_type || '') === 'delivery') {
+              const dc = (typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
+              if (typeof dc !== 'undefined') {
+                lines2.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
               }
-              lines2.push(`Стоимость: ${formatMoney(tc)} ₽`);
-              if (o.payment_status_name) lines2.push(`Статус оплаты: ${o.payment_status_name}`);
-              lines2.push(`Оплачено: ${formatMoney(pa)} ₽`);
-              lines2.push(`Остаток: ${formatMoney(rem)} ₽`);
+              if (typeof detObj.delivery_paid !== 'undefined') {
+                lines2.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+              }
             }
+            lines2.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+            if (o.payment_status_name) lines2.push(`Статус оплаты: ${o.payment_status_name}`);
+            lines2.push(`Оплачено: ${formatMoney(pa)} ₽`);
+            lines2.push(`Остаток: ${formatMoney(rem)} ₽`);
             lines2.push(`Контакты:`);
             lines2.push(`Клиент: ${o.client_name}, ${o.client_phone}`);
             if (o.fulfillment_type !== 'pickup') {

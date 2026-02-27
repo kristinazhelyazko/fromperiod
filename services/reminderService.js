@@ -111,10 +111,11 @@ function formatOrderDetails(o) {
   return lines.join('\n');
 }
 
-function formatReminderMessage(orderId, executionDate, daysLeft, order) {
+function formatReminderMessage(orderNumber, executionDate, daysLeft, order) {
+  const num = orderNumber != null ? orderNumber : (order && order.id);
   return [
     'Напоминание!',
-    `Есть активный заказ №${orderId} на ${formatRuDate(executionDate)}.`,
+    `Есть активный заказ №${num} на ${formatRuDate(executionDate)}.`,
     '',
     `Количество дней: ${daysLeft}`,
     '',
@@ -122,10 +123,11 @@ function formatReminderMessage(orderId, executionDate, daysLeft, order) {
   ].join('\n');
 }
 
-function formatAdminReminderMessage(orderId, executionDate, daysLeft, addressName, order) {
+function formatAdminReminderMessage(orderNumber, executionDate, daysLeft, addressName, order) {
+  const num = orderNumber != null ? orderNumber : (order && order.id);
   return [
     'Напоминание!',
-    `Есть активный заказ №${orderId} на ${formatRuDate(executionDate)}.`,
+    `Есть активный заказ №${num} на ${formatRuDate(executionDate)}.`,
     `Адрес: ${addressName || ''}`,
     '',
     `Количество дней: ${daysLeft}`,
@@ -134,9 +136,9 @@ function formatAdminReminderMessage(orderId, executionDate, daysLeft, addressNam
   ].join('\n');
 }
 
-function formatReminderErrorMessage(orderId, triggerType, addressName, error) {
+function formatReminderErrorMessage(orderNumberOrId, triggerType, addressName, error) {
   const errMsg = String((error && error.message) || error || '').slice(0, 500);
-  const num = Number(orderId || 0) || orderId;
+  const num = Number(orderNumberOrId != null ? orderNumberOrId : 0) || orderNumberOrId;
   return [
     '❌ Ошибка отправки напоминания',
     `Заказ №${num}`,
@@ -171,7 +173,8 @@ async function processDueReminders() {
           const addr = r.address_name || '';
           const channelId = CHANNEL_MAP[addr];
           const daysLeft = formatDaysLeft(r.trigger_type);
-          const msg = formatReminderMessage(r.order_id, r.execution_date, daysLeft, order);
+          const orderNum = order.number ?? r.order_id;
+          const msg = formatReminderMessage(orderNum, r.execution_date, daysLeft, order);
           if (channelId && isValidChannelId(channelId)) {
             await sendToChannel(channelId, msg);
             const fidList = (Array.isArray(order.photos) ? order.photos : []).filter(Boolean);
@@ -189,7 +192,7 @@ async function processDueReminders() {
               try {
                 const warnMsg = [
                   '⚠️ Канал адреса не настроен или некорректен',
-                  `Заказ №${r.order_id}`,
+                  `Заказ №${order.number ?? r.order_id}`,
                   `Адрес: ${addr || ''}`,
                   `Триггер: ${r.trigger_type}`,
                 ].join('\n');
@@ -199,7 +202,7 @@ async function processDueReminders() {
               }
             }
           }
-          const adminMsg = formatAdminReminderMessage(r.order_id, r.execution_date, daysLeft, addr, order);
+          const adminMsg = formatAdminReminderMessage(orderNum, r.execution_date, daysLeft, addr, order);
           const suppressAdmin = String(addr || '').toLowerCase() === 'тестовый магазин';
           if (!suppressAdmin && isValidChannelId(ADMIN_CHANNEL_ID)) {
             await sendToChannel(ADMIN_CHANNEL_ID, adminMsg);
@@ -218,7 +221,7 @@ async function processDueReminders() {
           logger.error('Error sending reminder', e);
           if (ERROR_CHANNEL_ID && isValidChannelId(ERROR_CHANNEL_ID)) {
             try {
-              const em = formatReminderErrorMessage(r.order_id, r.trigger_type, r.address_name || '', e);
+              const em = formatReminderErrorMessage(order?.number ?? r.order_id, r.trigger_type, r.address_name || '', e);
               await sendToChannel(ERROR_CHANNEL_ID, em);
             } catch (e2) {
               logger.error('Failed to notify error channel about reminder failure', e2);
@@ -267,7 +270,8 @@ async function sendDueRemindersForOrder(orderId) {
           const addr = r.address_name || '';
           const channelId = CHANNEL_MAP[addr];
           const daysLeft = formatDaysLeft(r.trigger_type);
-          const msg = formatReminderMessage(r.order_id, r.execution_date, daysLeft, order);
+          const orderNum = order.number ?? r.order_id;
+          const msg = formatReminderMessage(orderNum, r.execution_date, daysLeft, order);
           if (channelId && isValidChannelId(channelId)) {
             await sendToChannel(channelId, msg);
             const fidList = (Array.isArray(order.photos) ? order.photos : []).filter(Boolean);
@@ -285,7 +289,7 @@ async function sendDueRemindersForOrder(orderId) {
               try {
                 const warnMsg = [
                   '⚠️ Канал адреса не настроен или некорректен',
-                  `Заказ №${r.order_id}`,
+                  `Заказ №${order.number ?? r.order_id}`,
                   `Адрес: ${addr || ''}`,
                   `Триггер: ${r.trigger_type}`,
                 ].join('\n');
@@ -295,7 +299,7 @@ async function sendDueRemindersForOrder(orderId) {
               }
             }
           }
-          const adminMsg = formatAdminReminderMessage(r.order_id, r.execution_date, daysLeft, addr, order);
+          const adminMsg = formatAdminReminderMessage(orderNum, r.execution_date, daysLeft, addr, order);
           const suppressAdmin = String(addr || '').toLowerCase() === 'тестовый магазин';
           if (!suppressAdmin && isValidChannelId(ADMIN_CHANNEL_ID)) {
             await sendToChannel(ADMIN_CHANNEL_ID, adminMsg);
@@ -314,7 +318,7 @@ async function sendDueRemindersForOrder(orderId) {
           logger.error('Error sending order reminder (event-driven)', e);
           if (ERROR_CHANNEL_ID && isValidChannelId(ERROR_CHANNEL_ID)) {
             try {
-              const em = formatReminderErrorMessage(r.order_id, r.trigger_type, r.address_name || '', e);
+              const em = formatReminderErrorMessage(order?.number ?? r.order_id, r.trigger_type, r.address_name || '', e);
               await sendToChannel(ERROR_CHANNEL_ID, em);
             } catch (e2) {
               logger.error('Failed to notify error channel about reminder failure', e2);

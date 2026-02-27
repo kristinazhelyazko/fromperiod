@@ -24,7 +24,6 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-pstock}:${POSTGRES_PASSWORD:-pstock}@postgres:5432/${POSTGRES_DB:-pstock}}
       DATABASE_SSL: ${DATABASE_SSL:-no}
       WEB_APP_URL: ${WEB_APP_URL:-http://localhost:3000}
     depends_on:
@@ -59,7 +58,6 @@ services:
     environment:
       NODE_ENV: production
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-pstock}:${POSTGRES_PASSWORD:-pstock}@postgres:5432/${POSTGRES_DB:-pstock}}
       DATABASE_SSL: ${DATABASE_SSL:-no}
     depends_on:
       postgres:

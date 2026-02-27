@@ -3,7 +3,12 @@ const router = express.Router();
 const path = require('path');
 const orderService = require('../../services/orderService');
 const logger = require('../../utils/logger');
-const { sendToChannel, sendMediaGroupToChannel } = require('../../services/telegramService');
+const {
+  sendToChannel,
+  sendMediaGroupToChannel,
+  sendToClientChat,
+  sendMediaGroupToClientChat,
+} = require('../../services/telegramService');
 
 const REMINDER_CHANNEL_MAP = {
   'Белгород': '-1003868788094',
@@ -26,12 +31,29 @@ function isValidChannelId(id) {
 function buildImageUrl(p) {
   const raw = String(p || '').trim();
   if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return raw;
+  // Для служебных путей mini-app всегда хотим получить локальный путь внутри контейнера
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      const cleanedUrlPath = url.pathname.replace(/^\/+/, '');
+      const rootDirFromUrl = path.join(__dirname, '..', '..');
+      return path.join(rootDirFromUrl, cleanedUrlPath);
+    } catch {
+      // если URL не распарсился, продолжаем обычной логикой ниже
+    }
+  }
   const isWinAbs = /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('\\\\');
   if (isWinAbs) return raw;
   const rootDir = path.join(__dirname, '..', '..');
   const cleaned = raw.replace(/^\/+/, '');
   return path.join(rootDir, cleaned);
+}
+
+function buildPublicImageUrl(p) {
+  const raw = String(p || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://fromperiod.ru/${raw.replace(/^\/+/, '')}`;
 }
 
 function buildPositionsText(items) {
@@ -111,6 +133,12 @@ router.post('/orders', async (req, res, next) => {
 
     if (!trimmedClientName || !trimmedClientPhone) {
       return res.status(400).json({ error: 'Не указаны данные клиента' });
+    }
+
+    if (clientChatId) {
+      logger.info('Store order: clientChatId present, will save and notify client', { clientChatId: String(clientChatId).slice(0, 10) + '…' });
+    } else {
+      logger.warn('Store order: clientChatId missing — client will not get Telegram messages for this order');
     }
 
     const groupNumber = await orderService.generateOrderNumber();
@@ -215,7 +243,11 @@ router.post('/orders', async (req, res, next) => {
       if (clientChatId) {
         const clientHeader = `Ваш заказ №${numberStr} находится в обработке, наш менеджер свяжется с вами в ближайшее время☺️!`;
         const clientMessage = [clientHeader, '', positionsText].join('\n').trim();
-        await sendToChannel(String(clientChatId), clientMessage);
+        try {
+          await sendToClientChat(String(clientChatId), clientMessage);
+        } catch (e) {
+          logger.error('Failed to send store order message to client', e);
+        }
       }
     } catch (sendError) {
       logger.error('Failed to send store order messages', sendError);
@@ -223,14 +255,20 @@ router.post('/orders', async (req, res, next) => {
     }
 
     try {
-      const photoUrls = (items || [])
+      const localPhotoPaths = (items || [])
         .map((item) => buildImageUrl(item.imagePath || item.image_path))
-        .filter((u) => !!u);
+        .filter(Boolean);
 
-      if (photoUrls.length > 0) {
-        await sendMediaGroupToChannel(channelId, photoUrls);
-        if (clientChatId) {
-          await sendMediaGroupToChannel(String(clientChatId), photoUrls);
+      if (localPhotoPaths.length > 0 && channelId) {
+        await sendMediaGroupToChannel(channelId, localPhotoPaths);
+      }
+
+      if (clientChatId) {
+        const clientPhotoPaths = (items || [])
+          .map((item) => buildImageUrl(item.imagePath || item.image_path))
+          .filter(Boolean);
+        if (clientPhotoPaths.length > 0) {
+          await sendMediaGroupToClientChat(String(clientChatId), clientPhotoPaths);
         }
       }
     } catch (photoError) {

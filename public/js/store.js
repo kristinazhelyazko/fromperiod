@@ -47,6 +47,19 @@ async function selectStoreAddress(addressId, addressName) {
   }
 }
 
+function updateCartBadge() {
+  const totalQty = storeState.items.reduce((sum, item) => sum + (item.qty || 0), 0);
+  const badge = document.getElementById('cart-count-badge');
+  if (!badge) return;
+  if (totalQty > 0) {
+    badge.textContent = String(totalQty);
+    badge.style.display = 'inline-block';
+  } else {
+    badge.textContent = '';
+    badge.style.display = 'none';
+  }
+}
+
 function renderCatalog() {
   const list = document.getElementById('catalog-list');
   list.innerHTML = '';
@@ -105,6 +118,7 @@ function renderCatalog() {
 
     list.appendChild(card);
   });
+  updateCartBadge();
 }
 
 function updateItemQty(index, newQty) {

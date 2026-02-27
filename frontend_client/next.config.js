@@ -1,5 +1,5 @@
 /** @type {import('next').NextConfig} */
-const API_BASE = process.env.API_BASE_URL || 'http://localhost:3004';
+const API_BASE = process.env.API_BASE_URL || 'http://web:3000';
 
 function normalizeApiBase(base) {
   if (!base) return '';
@@ -14,10 +14,7 @@ const nextConfig = {
         source: '/api/:path*',
         destination: base + '/api/:path*',
       },
-      {
-        source: '/elements/:path*',
-        destination: base + '/elements/:path*',
-      },
+      // Только API прокидываем через backend; статику /elements раздаёт client_frontend сам
     ];
   },
 };
