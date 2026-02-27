@@ -1,12 +1,12 @@
-﻿# Продакшн‑деплой pstock
+# Продакшн‑деплой pstock
 
 Этот файл описывает, как развернуть актуальную версию проекта в продакшене:
 
 - бот для сотрудников (staff‑бот на Node.js),
-- мини‑приложение для сотрудников (Node + старый фронт из public/),
-- бот для клиентов (client‑bot),
-- бэкенд приложения для клиентов (Next.js, каталог backend/),
-- фронтенд приложения для клиентов (Next.js, каталог frontend/),
+- мини‑приложение для сотрудников (Node + фронт из public/ или Next.js из frontend/),
+- бот для клиентов (client‑бот),
+- backend‑слой (Next.js, каталог backend/ — API для отчётов и служебных задач),
+- фронтенд приложения для клиентов (Next.js, каталог frontend_client/),
 - миграции и база данных PostgreSQL.
 
 ## 1. Подготовка сервера
@@ -71,30 +71,53 @@ node migrations/run.js
 
 При старте контейнеров web и bot миграции также выполняются автоматически, но явный запуск перед первым деплоем полезен для явной проверки.
 
-## 3. Обновление staff‑части (postgres + web + bot)
+## 3. Обновление staff‑части и включение клиентского приложения (postgres + web + bot + client_frontend)
 
 Файл docker-compose.yml описывает сервисы:
 
 - postgres — PostgreSQL с volume pgdata,
-- web — Node‑сервер server.js + статика из public/ (старое приложение для сотрудников),
+- web — Node‑сервер server.js + статика из public/ (приложение для сотрудников и API для клиентов),
+- client_frontend — фронтенд приложения для клиентов (Next.js из каталога frontend_client/),
 - bot — бот для сотрудников (bot/index.js).
 
-Пересобрать образы и обновить контейнеры:
+### 3.1. Пересборка образов и обновление контейнеров
 
 ```bash
-docker compose build web bot
-docker compose up -d web bot
+docker compose build web bot client_frontend
+docker compose up -d web bot client_frontend
 ```
 
-Проверка:
+### 3.2. Проверка контейнеров
 
 ```bash
 docker compose ps
-docker compose logs -f bot
 docker compose logs -f web
+docker compose logs -f bot
+docker compose logs -f client_frontend
 ```
 
 База данных остаётся в том же состоянии (volume pgdata), схема обновляется миграциями.
+
+### 3.3. Порты и URL в docker-compose.yml
+
+По умолчанию в docker-compose.yml используются следующие маппинги портов:
+
+- web: `3000:3000` — staff‑веб и API (Node server.js),
+- client_frontend: `3002:3000` — клиентское приложение (Next.js).
+
+Это означает:
+
+- staff‑веб доступен по `http://<server-ip>:3000/`,
+- клиентское приложение доступно по `http://<server-ip>:3002/` (или за reverse‑proxy/nginx).
+
+В боте для клиентов используется переменная окружения `WEB_APP_CLIENT_URL` (в .env в корне проекта).
+В продакшене она должна указывать **публичный HTTPS‑адрес** клиентского фронтенда, например:
+
+```env
+WEB_APP_CLIENT_URL=https://client.example.com/
+```
+
+Именно этот URL будет подставляться в кнопку «Перейти в приложение» в клиентском боте.
 
 ## 4. Деплой бота для клиентов (client-bot)
 
@@ -131,9 +154,10 @@ pm2 save
 pm2 logs client-bot
 ```
 
-## 5. Деплой бэкенда приложения для клиентов (backend/)
+## 5. Бэкенд‑слой (backend/)
 
-Бэкенд клиента — Next.js‑приложение в каталоге backend/, по умолчанию слушает порт 3001.
+Каталог backend/ содержит Next.js‑приложение, реализующее HTTP‑API для отчётов и служебных задач. 
+Его можно разворачивать отдельно, если требуется вынести часть логики в отдельный сервис.
 
 ### Вариант А: через Docker
 
@@ -160,28 +184,30 @@ npm run build
 npm start   # слушает порт 3001
 ```
 
-## 6. Деплой фронтенда приложения для клиентов (frontend/)
+## 6. Альтернативный фронтенд для сотрудников (frontend/)
 
-Фронтенд клиента живёт в каталоге frontend/ и по умолчанию слушает порт 3000. Чтобы не конфликтовать со staff‑web на 3000, удобно отдавать клиентский фронт на другом порту или отдельном домене.
+Каталог frontend/ содержит Next.js‑версию приложения для сотрудников. 
+В текущей конфигурации основной staff‑веб отдаётся через сервис web (server.js + public/).
+Next‑вариант можно разворачивать отдельно, если потребуется.
 
 ### Вариант А: через Docker
 
 ```bash
-cd /path/ocker build -t pstock-frontend .
+cd /path/to/pstock/frontend
+docker build -t pstock-frontend .
 
 docker run -d \
   --name pstock-frontend \
-  -p 3002:3000 \
+  -p 3003:3000 \
   pstock-frontend
 ```
-
-Фронтенд будет доступен по http://<server-ip>:3002/. Для ботов в переменной WEB_APP_CLIENT_URL указываем HTTPS‑адрес (через nginx или другой прокси).
 
 ### Вариант Б: без Docker
 
 ```bash
 cd /path/to/pstock/frontend
 npm install
+npm run build
 npm run start   # по умолчанию порт 3000
 ```
 

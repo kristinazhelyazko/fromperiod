@@ -8,9 +8,21 @@ const app = express();
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3004',
+  'http://localhost:3005',
+  process.env.WEB_APP_URL && process.env.WEB_APP_URL.replace(/\/$/, '')
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.WEB_APP_URL || '*',
-  credentials: true
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  }
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
