@@ -14,7 +14,10 @@ const nextConfig = {
         source: '/api/:path*',
         destination: base + '/api/:path*',
       },
-      // Только API прокидываем через backend; статику /elements раздаёт client_frontend сам
+      {
+        source: '/elements/:path*',
+        destination: base + '/elements/:path*',
+      },
     ];
   },
 };

@@ -116,8 +116,10 @@ async function createOrder(userId, order) {
       orderNumber = await reserveOrderNumber(client, 'order');
     }
     const executionTimeTo = order.execution_time_to || order.execution_time || '00:00';
+    const cardNeededFlag = (order.details && order.details.card_needed) ? 1 : 2;
+    const orderSource = order.order_source === 1 ? 1 : 0;
     const insOrder = await client.query(
-      'INSERT INTO orders (created_by_user_id, fulfillment_type, address_id, execution_date, execution_time, execution_time_to, order_type_id, status, number, creator_full_name, payment_status_id, cost, total_cost, delivery_cost, total_delivery_cost, paid_amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id',
+      'INSERT INTO orders (created_by_user_id, fulfillment_type, address_id, execution_date, execution_time, execution_time_to, order_type_id, status, number, creator_full_name, payment_status_id, cost, total_cost, delivery_cost, total_delivery_cost, paid_amount, card_needed_flag, order_source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id',
       [
         userId,
         order.fulfillment_type,
@@ -135,6 +137,8 @@ async function createOrder(userId, order) {
         order.delivery_cost || 0,
         order.total_delivery_cost || order.delivery_cost || 0,
         order.paid_amount || 0,
+        cardNeededFlag,
+        orderSource,
       ]
     );
     const orderId = insOrder.rows[0].id;
@@ -280,8 +284,10 @@ async function createOrderDraft(userId, order) {
       orderNumber = await reserveOrderNumber(client, 'draft');
     }
     const executionTimeTo = order.execution_time_to || order.execution_time || '00:00';
+    const cardNeededFlag = (order.details && order.details.card_needed) ? 1 : 2;
+    const orderSource = order.order_source === 1 ? 1 : 0;
     const insOrder = await client.query(
-      'INSERT INTO orders (created_by_user_id, fulfillment_type, address_id, execution_date, execution_time, execution_time_to, order_type_id, status, number, creator_full_name, payment_status_id, total_cost, paid_amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id',
+      'INSERT INTO orders (created_by_user_id, fulfillment_type, address_id, execution_date, execution_time, execution_time_to, order_type_id, status, number, creator_full_name, payment_status_id, total_cost, paid_amount, card_needed_flag, order_source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id',
       [
         userId,
         order.fulfillment_type,
@@ -296,6 +302,8 @@ async function createOrderDraft(userId, order) {
         order.payment_status_id || null,
         order.total_cost || 0,
         order.paid_amount || 0,
+        cardNeededFlag,
+        orderSource,
       ]
     );
     const orderId = insOrder.rows[0].id;
@@ -434,8 +442,9 @@ async function updateOrderAndActivate(orderId, order) {
     }
     const status = order.status || 'active';
     const executionTimeTo = order.execution_time_to || order.execution_time || '00:00';
+    const cardNeededFlag = (order.details && order.details.card_needed) ? 1 : 2;
     await client.query(
-      'UPDATE orders SET fulfillment_type=$1, address_id=$2, execution_date=$3, execution_time=$4, execution_time_to=$5, order_type_id=$6, status=$7, creator_full_name=$8, payment_status_id=$9, cost=$10, total_cost=$11, delivery_cost=$12, total_delivery_cost=$13, paid_amount=$14, updated_at=NOW() WHERE id=$15',
+      'UPDATE orders SET fulfillment_type=$1, address_id=$2, execution_date=$3, execution_time=$4, execution_time_to=$5, order_type_id=$6, status=$7, creator_full_name=$8, payment_status_id=$9, cost=$10, total_cost=$11, delivery_cost=$12, total_delivery_cost=$13, paid_amount=$14, card_needed_flag=$15, updated_at=NOW() WHERE id=$16',
       [
         order.fulfillment_type,
         addressId,
@@ -446,11 +455,12 @@ async function updateOrderAndActivate(orderId, order) {
         status,
         order.creator_full_name || null,
         order.payment_status_id || null,
-        order.cost || order.total_cost || 0,
-        order.total_cost || order.cost || 0,
-        order.delivery_cost || 0,
-        order.total_delivery_cost || order.delivery_cost || 0,
-        order.paid_amount || 0,
+        order.cost ?? order.total_cost ?? 0,
+        order.total_cost ?? order.cost ?? 0,
+        order.delivery_cost ?? 0,
+        order.total_delivery_cost ?? order.delivery_cost ?? 0,
+        order.paid_amount ?? 0,
+        cardNeededFlag,
         orderId,
       ]
     );
@@ -641,11 +651,16 @@ async function getOrderWithDetails(orderId) {
   const hasOt = !!(otCheck.rows[0] && otCheck.rows[0].exists);
   if (hasOt) {
     const res = await pool.query(
-      `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.status,
+      `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.execution_time_to, o.status,
               o.creator_full_name,
               o.cost,
               o.total_cost,
               o.paid_amount,
+              o.card_needed_flag,
+              o.order_source,
+              o.payment_status_id,
+              o.delivery_cost,
+              o.total_delivery_cost,
               ps.name AS payment_status_name,
               a.name AS address_name,
               ot.name AS order_type_name,
@@ -669,11 +684,16 @@ async function getOrderWithDetails(orderId) {
     return res.rows[0] || null;
   } else {
     const res = await pool.query(
-      `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.status,
+      `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.execution_time_to, o.status,
               o.creator_full_name,
               o.cost,
               o.total_cost,
               o.paid_amount,
+              o.card_needed_flag,
+              o.order_source,
+              o.payment_status_id,
+              o.delivery_cost,
+              o.total_delivery_cost,
               ps.name AS payment_status_name,
               a.name AS address_name,
               o.order_type AS order_type_name,
@@ -749,6 +769,8 @@ async function getOrdersByNumber(number) {
             o.cost,
             o.total_cost,
             o.paid_amount,
+            o.card_needed_flag,
+            o.order_source,
             a.name AS address_name,
             d.details,
             c.client_name,

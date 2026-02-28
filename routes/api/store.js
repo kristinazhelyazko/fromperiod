@@ -17,6 +17,8 @@ const REMINDER_CHANNEL_MAP = {
   'Тестовый магазин': '-5159177330',
 };
 
+const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID || '-1003345446030';
+
 function resolveReminderChannel(addressName) {
   const addr = String(addressName || '').trim();
   if (!addr) return null;
@@ -96,8 +98,12 @@ function buildPositionsText(items) {
         }
       }
     }
-    if (item.cardNeeded && item.cardText) {
-      lines.push(`Открытка: ${item.cardText}`);
+    if (item.cardNeeded) {
+      if (item.cardText) {
+        lines.push(`Открытка: ${item.cardText}`);
+      } else {
+        lines.push('Нужна открытка: да');
+      }
     }
     lines.push(`Стоимость позиции: ${price.toFixed(2)} ₽`);
     lines.push('');
@@ -211,6 +217,7 @@ router.post('/orders', async (req, res, next) => {
           paid_amount: 0,
           status: 'processing',
           number: groupNumber,
+          order_source: 1,
         });
         createdOrderIds.push(orderId);
       } catch (e) {
@@ -240,6 +247,14 @@ router.post('/orders', async (req, res, next) => {
       const channelMessage = [headerChannel, '', clientInfoLines.join('\n'), '', positionsText].join('\n').trim();
       await sendToChannel(channelId, channelMessage);
 
+      if (ADMIN_CHANNEL_ID && isValidChannelId(ADMIN_CHANNEL_ID)) {
+        try {
+          await sendToChannel(ADMIN_CHANNEL_ID, channelMessage);
+        } catch (e) {
+          logger.error('Failed to send store order to admin channel', e);
+        }
+      }
+
       if (clientChatId) {
         const clientHeader = `Ваш заказ №${numberStr} находится в обработке, наш менеджер свяжется с вами в ближайшее время☺️!`;
         const clientMessage = [clientHeader, '', positionsText].join('\n').trim();
@@ -261,6 +276,13 @@ router.post('/orders', async (req, res, next) => {
 
       if (localPhotoPaths.length > 0 && channelId) {
         await sendMediaGroupToChannel(channelId, localPhotoPaths);
+      }
+      if (localPhotoPaths.length > 0 && ADMIN_CHANNEL_ID && isValidChannelId(ADMIN_CHANNEL_ID)) {
+        try {
+          await sendMediaGroupToChannel(ADMIN_CHANNEL_ID, localPhotoPaths);
+        } catch (e) {
+          logger.error('Failed to send store order photos to admin channel', e);
+        }
       }
 
       if (clientChatId) {

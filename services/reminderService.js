@@ -62,12 +62,21 @@ function isValidChannelId(id) {
   return /^-\d+$/.test(s);
 }
 
+function formatTimeHM(val) {
+  const s = String(val || '');
+  return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
 function formatOrderDetails(o) {
   const lines = [];
   lines.push(`Тип получения: ${o.fulfillment_type === 'pickup' ? 'Самовывоз' : 'Доставка'}`);
   lines.push(`Точка: ${o.address_name}`);
   lines.push(`Дата: ${formatRuDate(o.execution_date)}`);
-  lines.push(`Время: ${String(o.execution_time || '')}`);
+  if (o.order_source === 1 && o.execution_time_to) {
+    lines.push(`Время: с ${formatTimeHM(o.execution_time)} по ${formatTimeHM(o.execution_time_to)}`);
+  } else {
+    lines.push(`Время: ${formatTimeHM(o.execution_time || '')}`);
+  }
   lines.push(`Тип заказа: ${String(o.order_type_called || '')}`);
   if (o.creator_full_name) {
     lines.push(`Оформил: ${o.creator_full_name}`);
@@ -86,6 +95,8 @@ function formatOrderDetails(o) {
     lines.push(`Открытка: ${det.card_text}`);
   } else if (o.card_photo) {
     lines.push('Открытка: фото добавлено');
+  } else if (o.card_needed_flag === 1 || (det && det.card_needed)) {
+    lines.push('Нужна открытка: да');
   }
   if (det && det.comment) {
     lines.push(`Комментарий: ${det.comment}`);

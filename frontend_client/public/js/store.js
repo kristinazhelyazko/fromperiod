@@ -10,6 +10,11 @@ const STORE_IMG_BASE =
     ? window.__IMG_BASE_URL__.replace(/\/$/, '')
     : 'https://fromperiod.ru';
 
+function buildCatalogImageUrl(imagePath) {
+  if (!imagePath) return '';
+  return STORE_IMG_BASE + encodeURI(imagePath);
+}
+
 async function initStore() {
   try {
     const addresses = await apiRequest('/addresses');
@@ -78,7 +83,7 @@ function renderCatalog() {
     imgWrapper.className = 'catalog-image-wrapper';
     const img = document.createElement('img');
     img.className = 'catalog-image';
-    img.src = STORE_IMG_BASE + item.image_path;
+    img.src = buildCatalogImageUrl(item.image_path);
     img.alt = item.name;
     imgWrapper.appendChild(img);
 
@@ -172,7 +177,7 @@ function renderCart() {
     imgWrapper.className = 'cart-item-image-wrapper';
     const img = document.createElement('img');
     img.className = 'cart-item-image';
-    img.src = STORE_IMG_BASE + item.image_path;
+    img.src = buildCatalogImageUrl(item.image_path);
     img.alt = item.name;
     imgWrapper.appendChild(img);
 
@@ -291,7 +296,7 @@ function renderCheckout() {
     imgWrapper.className = 'cart-item-image-wrapper';
     const img = document.createElement('img');
     img.className = 'cart-item-image';
-    img.src = ci.image_path;
+    img.src = buildCatalogImageUrl(ci.image_path);
     img.alt = ci.name;
     imgWrapper.appendChild(img);
 
