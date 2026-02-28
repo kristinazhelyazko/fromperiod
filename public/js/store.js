@@ -7,7 +7,7 @@ const storeState = {
 
 async function initStore() {
   try {
-    const addresses = await apiRequest('/addresses');
+    const addresses = await apiRequest('/addresses?_=' + Date.now());
     const container = document.getElementById('store-address-buttons');
     container.innerHTML = '';
     addresses.forEach((addr) => {

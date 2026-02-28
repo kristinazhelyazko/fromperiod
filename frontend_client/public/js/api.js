@@ -10,8 +10,11 @@ async function apiRequest(endpoint, options = {}) {
       : `${API_BASE_URL}${endpoint}`;
     const response = await fetch(url, {
       ...options,
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
         ...(options.headers || {}),
       },
     });

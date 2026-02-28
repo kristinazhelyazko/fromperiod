@@ -5,7 +5,7 @@ export const runtime = 'nodejs';
 
 export async function GET() {
   try {
-    const result = await pool.query('SELECT id, name FROM address ORDER BY name');
+    const result = await pool.query('SELECT id, name FROM address WHERE is_visible_in_store = TRUE ORDER BY name');
     return Response.json(result.rows);
   } catch (error) {
     logger.error('addresses', error);
