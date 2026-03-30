@@ -1,5 +1,5 @@
 const { getMainMenuKeyboard } = require('../keyboards');
-const { getUserState, clearUserState } = require('./auth');
+const { getUserState, setUserState, clearUserState } = require('./auth');
 const logger = require('../../utils/logger');
 
 async function handleMainMenu(bot, msg) {
@@ -8,13 +8,33 @@ async function handleMainMenu(bot, msg) {
 
   try {
     const userState = getUserState(userId);
-    
-    if (userState.state !== 'authenticated') {
+
+    // Сессия активна: либо состояние authenticated, либо есть сохранённый user (например order_manage_list)
+    const hasUser = userState.data && userState.data.user;
+    const expAt = (userState.data || {}).auth_expires_at;
+    const sessionValid = hasUser && (!expAt || Date.now() <= expAt);
+
+    if (userState.state !== 'authenticated' && !sessionValid) {
       await bot.sendMessage(chatId, '❌ Вы не авторизованы. Введите /start для начала работы.');
       return;
     }
 
-    const rightsName = userState.data.user.rights_name;
+    const rightsName = (userState.data && userState.data.user)
+      ? (userState.data.user.rights_name || '')
+      : '';
+    if (!hasUser) {
+      await bot.sendMessage(chatId, '❌ Вы не авторизованы. Введите /start для начала работы.');
+      return;
+    }
+
+    // Возврат в главное меню: фиксируем состояние authenticated и продлеваем сессию
+    if (userState.state !== 'authenticated') {
+      setUserState(userId, 'authenticated', {
+        user: userState.data.user,
+        auth_expires_at: Date.now() + 30 * 60 * 1000,
+      });
+    }
+
     try {
       await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
     } catch (error) {

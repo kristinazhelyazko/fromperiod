@@ -28,6 +28,20 @@ const {
   handleChangeUserRightsStart,
   handleChangeUserRightsCommit
 } = require('./handlers/admin');
+const {
+  handleFiltersStart,
+  handleFilterAddress,
+  handleFilterStatus,
+  handleFilterPrev,
+  handleFilterNext,
+  handleFilterModeStatus,
+  handleFilterModeType,
+  handleFilterModeNumber,
+  handleFilterTypeAddress,
+  handleFilterTypeFulfillment,
+  handleFilterTypePrev,
+  handleFilterTypeNext,
+} = require('./handlers/filters');
 const { handleError } = require('./middleware/errorHandler');
 const logger = require('../utils/logger');
 const pool = require('../config/database');
@@ -186,6 +200,11 @@ async function start() {
         }
       }
       const st = getUserState(msg.from.id);
+      if (st.state === 'filter_by_number') {
+        const { handleFilterByNumberMessage } = require('./handlers/filters');
+        await handleFilterByNumberMessage(bot, msg);
+        return;
+      }
       if ((st.state || '').startsWith('order_')) {
         await handleOrderMessage(bot, msg);
       } else {
@@ -307,7 +326,39 @@ async function start() {
         await handleChangeUserRightsCommit(bot, ctx, targetUserId, 'admin');
       } else if (data === 'change_rights_cancel') {
         await handleManageUsers(bot, ctx);
+      } else if (data === 'filters') {
+        await handleFiltersStart(bot, ctx);
+      } else if (data === 'filter_mode_status') {
+        await handleFilterModeStatus(bot, ctx);
+      } else if (data === 'filter_mode_type') {
+        await handleFilterModeType(bot, ctx);
+      } else if (data === 'filter_mode_number') {
+        await handleFilterModeNumber(bot, ctx);
+      } else if (data.startsWith('filter_type_addr_')) {
+        await handleFilterTypeAddress(bot, ctx, data);
+      } else if (data === 'filter_type_delivery' || data === 'filter_type_pickup') {
+        await handleFilterTypeFulfillment(bot, ctx, data);
+      } else if (data === 'filter_type_prev') {
+        await handleFilterTypePrev(bot, ctx);
+      } else if (data === 'filter_type_next') {
+        await handleFilterTypeNext(bot, ctx);
+      } else if (data.startsWith('filter_addr_')) {
+        await handleFilterAddress(bot, ctx, data);
+      } else if (data.startsWith('filter_status_')) {
+        await handleFilterStatus(bot, ctx, data);
+      } else if (data === 'filter_prev') {
+        await handleFilterPrev(bot, ctx);
+      } else if (data === 'filter_next') {
+        await handleFilterNext(bot, ctx);
       } else if (data === 'back_menu') {
+        const stBack = getUserState(query.from.id);
+        const stateStr = String(stBack.state || '');
+        if ((stateStr.startsWith('order_manage') || stateStr.startsWith('filter_') || stateStr === 'filter_by_number') && stBack.data && stBack.data.user) {
+          setUserState(query.from.id, 'authenticated', {
+            user: stBack.data.user,
+            auth_expires_at: Date.now() + 30 * 60 * 1000,
+          });
+        }
         await handleMainMenu(bot, ctx);
       } else if (data.startsWith('order_')) {
         if (data === 'order_confirm' || data === 'order_edit') {

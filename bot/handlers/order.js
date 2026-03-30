@@ -1,6 +1,7 @@
 const { getUserState, setUserState, clearUserState } = require('./auth');
 const logger = require('../../utils/logger');
 const path = require('path');
+const fs = require('fs');
 const {
   getFulfillmentKeyboard,
   getStoreKeyboard,
@@ -81,8 +82,12 @@ async function showOrderManagePage(bot, chatId, userId, messageId) {
     const num = o.number || o.id;
     const count = o.positions_count || 1;
     const suffix = count > 1 ? ` (${count} поз.)` : '';
+    const emoji = orderStatusEmoji(o.status);
+    const dateStr = formatDateDDMM(o.execution_date);
+    const timeStr = formatTimeHM(o.execution_time || '');
+    const btnText = `${emoji} №${num}${suffix} ${dateStr} ${timeStr}`.trim();
     return [
-      { text: `№${num}${suffix} на ${formatDateRu(o.execution_date)}`, callback_data: `order_view_${o.id}` }
+      { text: btnText, callback_data: `order_view_${o.id}` }
     ];
   });
   const navRow = [];
@@ -163,7 +168,8 @@ function buildEditKeyboardFromState(stData) {
   if (det.card_text) keys.push('card_text');
   if (typeof det.has_boutonniere === 'boolean') keys.push('has_boutonniere');
   if (det.description) keys.push('description');
-  if (det.comment) keys.push('comment');
+  // Всегда позволяем редактировать комментарий, даже если его ещё нет
+  keys.push('comment');
   if (c.client_name) keys.push('client_name');
   if (c.client_phone) keys.push('client_phone');
   if (c.recipient_name) keys.push('recipient_name');
@@ -243,6 +249,23 @@ function formatDateRu(val) {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 }
 
+/** Дата в формате День.Месяц для кнопок (без года). */
+function formatDateDDMM(val) {
+  const d = toDateObj(val);
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Эмодзи статуса заказа для кнопки в управлении заказами. */
+function orderStatusEmoji(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'assembled') return '📦';
+  if (s === 'accepted') return '✅';
+  if (s === 'processing') return '⚠️';
+  if (s === 'active') return '✅';
+  return '✅';
+}
+
 function formatTimeHM(val) {
   const s = String(val || '');
   if (s.length >= 5) return s.slice(0, 5);
@@ -281,6 +304,286 @@ async function getDisplayPositionCost(o, det) {
   }
   if (positionCost === 0 && det) positionCost = Number(det.catalog_item_price ?? 0);
   return positionCost;
+}
+
+/** Shows full order detail (text, photos, action buttons) for management/filters. Used by order_view_ callback and filter-by-number. */
+async function showOrderDetailByOrderId(bot, chatId, userId, orderId) {
+  const o = await orderService.getOrderWithDetails(orderId);
+  if (!o) {
+    await bot.sendMessage(chatId, 'Заказ не найден.');
+    return;
+  }
+  const groupNumber = o.number || o.id;
+  let groupOrders = [];
+  if (groupNumber) {
+    try {
+      groupOrders = await orderService.getOrdersByNumber(groupNumber);
+    } catch (e) {
+      logger.error('getOrdersByNumber error', e);
+    }
+  }
+  const ids = Array.isArray(groupOrders) ? groupOrders.map(x => x.id) : [];
+  if (ids.length > 1) {
+    const lines = [];
+    const fullOrders = [];
+    const base = o;
+    const headerNumber = groupNumber || base.number || base.id;
+    lines.push(`Заказ №${headerNumber}`);
+    lines.push(`Магазин: ${base.address_name}`);
+    lines.push(`Всего позиций: ${ids.length}`);
+    for (let i = 0; i < ids.length; i += 1) {
+      const posId = ids[i];
+      const ord = posId === o.id ? o : await orderService.getOrderWithDetails(posId);
+      if (!ord) {
+        continue;
+      }
+      fullOrders.push(ord);
+      lines.push('');
+      lines.push(`Позиция ${i + 1}:`);
+      lines.push(`Тип получения: ${ord.fulfillment_type === 'pickup' ? 'Самовывоз' : 'Доставка'}`);
+      lines.push(`Дата: ${formatDateRu(ord.execution_date)}`);
+      lines.push(`Время: ${formatTimeDisplay(ord)}`);
+      lines.push(`Тип заказа: ${ord.order_type_called || ''}`);
+      if (ord.creator_full_name) {
+        lines.push(`Оформил: ${ord.creator_full_name}`);
+      }
+      const detObj2 = (ord.details && typeof ord.details === 'object') ? ord.details : {};
+      if (detObj2 && detObj2.catalog_item_name) {
+        lines.push(`Наименование: ${detObj2.catalog_item_name}`);
+      }
+      if (detObj2 && detObj2.composition_kind) {
+        const ck2 = String(detObj2.composition_kind || '');
+        const ckRu2 = ck2 === 'box' ? 'коробка' : ck2 === 'bouquet' ? 'букет' : ck2;
+        lines.push(`Тип композиции: ${ckRu2}`);
+      }
+      if (detObj2 && detObj2.composition) {
+        lines.push(`Состав: ${detObj2.composition}`);
+      }
+      if (detObj2 && detObj2.description) {
+        lines.push(`Описание:\n${detObj2.description}`);
+      }
+      if (ord.card_photo) {
+        lines.push('Открытка: фото добавлено');
+      } else if (detObj2.card_text) {
+        lines.push(`Открытка: ${detObj2.card_text}`);
+      } else if (ord.card_needed_flag === 1 || detObj2.card_needed) {
+        lines.push('Нужна открытка: да');
+      }
+      if (detObj2 && detObj2.comment) {
+        lines.push(`Комментарий: ${detObj2.comment}`);
+      }
+      const positionCost = await getDisplayPositionCost(ord, detObj2);
+      const pa2 = Number(ord.paid_amount || 0);
+      const rem2 = Math.max(positionCost - pa2, 0);
+      if ((ord.fulfillment_type || '') === 'delivery') {
+        const dc2 = (detObj2 && typeof detObj2.delivery_cost !== 'undefined') ? Number(detObj2.delivery_cost || 0) : undefined;
+        if (typeof dc2 !== 'undefined') {
+          lines.push(`Стоимость доставки: ${formatMoney(dc2)} ₽`);
+        }
+        if (typeof detObj2.delivery_paid !== 'undefined') {
+          lines.push(`Оплата доставки: ${detObj2.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+        }
+      }
+      lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+      if (ord.payment_status_name) lines.push(`Статус оплаты: ${ord.payment_status_name}`);
+      lines.push(`Оплачено: ${formatMoney(pa2)} ₽`);
+      lines.push(`Остаток: ${formatMoney(rem2)} ₽`);
+      lines.push(`Контакты:`);
+      lines.push(`Клиент: ${ord.client_name}, ${ord.client_phone}`);
+      if (ord.fulfillment_type !== 'pickup') {
+        lines.push(`Получатель: ${ord.recipient_name}, ${ord.recipient_phone}${ord.recipient_address ? ', ' + ord.recipient_address : ''}`);
+      }
+      {
+        const fidList2 = (Array.isArray(ord.photos) ? ord.photos : []).filter(Boolean);
+        const count2 = fidList2.length + (ord.card_photo ? 1 : 0);
+        if (count2 > 0) lines.push(`Фото: ${count2}`);
+      }
+    }
+    const buttonsGroup = [];
+    const statusGroup = String(o.status || '');
+    if (statusGroup !== 'assembled' && statusGroup !== 'processing') {
+      buttonsGroup.push([{ text: '📦 Собран', callback_data: `order_assembled_${o.id}` }]);
+    }
+    if (statusGroup === 'processing' && Number(o.order_source) === 1) {
+      buttonsGroup.push([{ text: '✅ Принят', callback_data: `order_accept_${o.id}` }]);
+    }
+    buttonsGroup.push([{ text: '✅ Выполнено', callback_data: `order_complete_${o.id}` }]);
+    if (statusGroup !== 'processing') {
+      buttonsGroup.push([{ text: '✏️ Редактировать', callback_data: `order_edit_group_${headerNumber}` }]);
+    }
+    buttonsGroup.push([{ text: '⛔ Отменить заказ', callback_data: `order_cancel_${o.id}` }]);
+    buttonsGroup.push([{ text: '🏠 Главное меню', callback_data: 'back_menu' }]);
+    const kbGroup = { reply_markup: { inline_keyboard: buttonsGroup } };
+    await bot.sendMessage(chatId, lines.join('\n'), kbGroup);
+    for (const ord of fullOrders) {
+      const fidList2 = (Array.isArray(ord.photos) ? ord.photos : []).filter(Boolean);
+      if (fidList2.length) {
+        try {
+          if (fidList2.length === 1) {
+            await bot.sendPhoto(chatId, fidList2[0]);
+          } else if (fidList2.length > 1) {
+            if (bot.sendMediaGroup) {
+              const chunkSize2 = 10;
+              for (let j = 0; j < fidList2.length; j += chunkSize2) {
+                const chunk2 = fidList2.slice(j, j + chunkSize2).map(fid => ({ type: 'photo', media: fid }));
+                await bot.sendMediaGroup(chatId, chunk2);
+              }
+            } else {
+              for (const fid of fidList2) {
+                await bot.sendPhoto(chatId, fid);
+              }
+            }
+          }
+        } catch (e) {
+          logger.error('Error sending order photos', e);
+        }
+      }
+      if (ord.card_photo) {
+        try {
+          await bot.sendPhoto(chatId, ord.card_photo);
+        } catch (e) {
+          logger.error('Error sending card photo', e);
+        }
+      }
+      const detForPhoto2 = (ord.details && typeof ord.details === 'object') ? ord.details : {};
+      if (detForPhoto2 && detForPhoto2.source === 'web_app' && detForPhoto2.catalog_item_id) {
+        try {
+          const imgPath2 = await orderService.getCatalogImagePathById(detForPhoto2.catalog_item_id);
+          const localPath2 = buildWebAppImageUrl(imgPath2);
+          if (localPath2) {
+            if (/^https?:\/\//i.test(localPath2)) {
+              await sendPhotoToChannel(chatId, localPath2);
+            } else {
+              await bot.sendPhoto(chatId, fs.createReadStream(localPath2));
+            }
+          }
+        } catch (e) {
+          logger.error('Error sending web_app catalog photo', e);
+        }
+      }
+    }
+  } else {
+    const lines = [];
+    const orderNumber = o.number || o.id;
+    lines.push(`Заказ №${orderNumber}`);
+    lines.push(`Тип получения: ${o.fulfillment_type === 'pickup' ? 'Самовывоз' : 'Доставка'}`);
+    lines.push(`Магазин: ${o.address_name}`);
+    lines.push(`Дата: ${formatDateRu(o.execution_date)}`);
+    lines.push(`Время: ${formatTimeDisplay(o)}`);
+    lines.push(`Тип заказа: ${o.order_type_called || ''}`);
+    if (o.creator_full_name) {
+      lines.push(`Оформил: ${o.creator_full_name}`);
+    }
+    const detObj = (o.details && typeof o.details === 'object') ? o.details : {};
+    if (detObj && detObj.composition_kind) {
+      const ck = String(detObj.composition_kind || '');
+      const ckRu = ck === 'box' ? 'коробка' : ck === 'bouquet' ? 'букет' : ck;
+      lines.push(`Тип композиции: ${ckRu}`);
+    }
+    if (detObj && detObj.composition) {
+      lines.push(`Состав: ${detObj.composition}`);
+    }
+    if (detObj && detObj.description) {
+      lines.push(`Описание:\n${detObj.description}`);
+    }
+    if (o.card_photo) {
+      lines.push('Открытка: фото добавлено');
+    } else if (detObj.card_text) {
+      lines.push(`Открытка: ${detObj.card_text}`);
+    } else if (o.card_needed_flag === 1 || detObj.card_needed) {
+      lines.push('Нужна открытка: да');
+    }
+    if (detObj && detObj.comment) {
+      lines.push(`Комментарий: ${detObj.comment}`);
+    }
+    const positionCost = await getDisplayPositionCost(o, detObj);
+    const pa = Number(o.paid_amount || 0);
+    const rem = Math.max(positionCost - pa, 0);
+    if ((o.fulfillment_type || '') === 'delivery') {
+      const dc = (detObj && typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
+      if (typeof dc !== 'undefined') {
+        lines.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
+      }
+      if (typeof detObj.delivery_paid !== 'undefined') {
+        lines.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
+      }
+    }
+    lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
+    if (o.payment_status_name) lines.push(`Статус оплаты: ${o.payment_status_name}`);
+    lines.push(`Оплачено: ${formatMoney(pa)} ₽`);
+    lines.push(`Остаток: ${formatMoney(rem)} ₽`);
+    lines.push(`Контакты:`);
+    lines.push(`Клиент: ${o.client_name}, ${o.client_phone}`);
+    if (o.fulfillment_type !== 'pickup') {
+      lines.push(`Получатель: ${o.recipient_name}, ${o.recipient_phone}${o.recipient_address ? ', ' + o.recipient_address : ''}`);
+    }
+    {
+      const fidList = (Array.isArray(o.photos) ? o.photos : []).filter(Boolean);
+      const count = fidList.length + (o.card_photo ? 1 : 0);
+      if (count > 0) lines.push(`Фото: ${count}`);
+    }
+    const buttons = [];
+    const statusSingle = String(o.status || '');
+    if (statusSingle !== 'assembled' && statusSingle !== 'processing') {
+      buttons.push([{ text: '📦 Собран', callback_data: `order_assembled_${o.id}` }]);
+    }
+    if (statusSingle === 'processing' && Number(o.order_source) === 1) {
+      buttons.push([{ text: '✅ Принят', callback_data: `order_accept_${o.id}` }]);
+    }
+    buttons.push([{ text: '✅ Выполнено', callback_data: `order_complete_${o.id}` }]);
+    if (statusSingle !== 'processing') {
+      buttons.push([{ text: '✏️ Редактировать', callback_data: `order_edit_${o.id}` }]);
+    }
+    buttons.push([{ text: '⛔ Отменить заказ', callback_data: `order_cancel_${o.id}` }]);
+    buttons.push([{ text: '🏠 Главное меню', callback_data: 'back_menu' }]);
+    const kb = { reply_markup: { inline_keyboard: buttons } };
+    await bot.sendMessage(chatId, lines.join('\n'), kb);
+    const fidList = (Array.isArray(o.photos) ? o.photos : []).filter(Boolean);
+    if (fidList.length) {
+      try {
+        if (fidList.length === 1) {
+          await bot.sendPhoto(chatId, fidList[0]);
+        } else if (fidList.length > 1) {
+          if (bot.sendMediaGroup) {
+            const chunkSize = 10;
+            for (let i = 0; i < fidList.length; i += chunkSize) {
+              const chunk = fidList.slice(i, i + chunkSize).map(fid => ({ type: 'photo', media: fid }));
+              await bot.sendMediaGroup(chatId, chunk);
+            }
+          } else {
+            for (const fid of fidList) {
+              await bot.sendPhoto(chatId, fid);
+            }
+          }
+        }
+      } catch (e) {
+        logger.error('Error sending order photos', e);
+      }
+    }
+    if (o.card_photo) {
+      try {
+        await bot.sendPhoto(chatId, o.card_photo);
+      } catch (e) {
+        logger.error('Error sending card photo', e);
+      }
+    }
+    const detForPhoto = (o.details && typeof o.details === 'object') ? o.details : {};
+    if (detForPhoto && detForPhoto.source === 'web_app' && detForPhoto.catalog_item_id) {
+      try {
+        const imgPath = await orderService.getCatalogImagePathById(detForPhoto.catalog_item_id);
+        const localPath = buildWebAppImageUrl(imgPath);
+        if (localPath) {
+          if (/^https?:\/\//i.test(localPath)) {
+            await sendPhotoToChannel(chatId, localPath);
+          } else {
+            await bot.sendPhoto(chatId, fs.createReadStream(localPath));
+          }
+        }
+      } catch (e) {
+        logger.error('Error sending web_app catalog photo', e);
+      }
+    }
+  }
 }
 
 function computeOrderTotalCost(orders) {
@@ -681,270 +984,9 @@ async function handleCallback(bot, ctx, data) {
       }
     } else if (data.startsWith('order_view_')) {
       const id = parseInt(data.replace('order_view_', ''), 10);
-      const o = await orderService.getOrderWithDetails(id);
-      if (!o) {
-        await bot.sendMessage(chatId, 'Заказ не найден.');
-        return;
-      }
-      const groupNumber = o.number || o.id;
-      let groupOrders = [];
-      if (groupNumber) {
-        try {
-          groupOrders = await orderService.getOrdersByNumber(groupNumber);
-        } catch (e) {
-          logger.error('getOrdersByNumber error', e);
-        }
-      }
-      const ids = Array.isArray(groupOrders) ? groupOrders.map(x => x.id) : [];
-      if (ids.length > 1) {
-        const lines = [];
-        const fullOrders = [];
-        const base = o;
-        const headerNumber = groupNumber || base.number || base.id;
-        lines.push(`Заказ №${headerNumber}`);
-        lines.push(`Магазин: ${base.address_name}`);
-        lines.push(`Всего позиций: ${ids.length}`);
-        for (let i = 0; i < ids.length; i += 1) {
-          const posId = ids[i];
-          const ord = posId === o.id ? o : await orderService.getOrderWithDetails(posId);
-          if (!ord) {
-            continue;
-          }
-          fullOrders.push(ord);
-          lines.push('');
-          lines.push(`Позиция ${i + 1}:`);
-          lines.push(`Тип получения: ${ord.fulfillment_type === 'pickup' ? 'Самовывоз' : 'Доставка'}`);
-          lines.push(`Дата: ${formatDateRu(ord.execution_date)}`);
-          lines.push(`Время: ${formatTimeDisplay(ord)}`);
-          lines.push(`Тип заказа: ${ord.order_type_called || ''}`);
-          if (ord.creator_full_name) {
-            lines.push(`Оформил: ${ord.creator_full_name}`);
-          }
-          const detObj2 = (ord.details && typeof ord.details === 'object') ? ord.details : {};
-          if (detObj2 && detObj2.catalog_item_name) {
-            lines.push(`Наименование: ${detObj2.catalog_item_name}`);
-          }
-          if (detObj2 && detObj2.composition_kind) {
-            const ck2 = String(detObj2.composition_kind || '');
-            const ckRu2 = ck2 === 'box' ? 'коробка' : ck2 === 'bouquet' ? 'букет' : ck2;
-            lines.push(`Тип композиции: ${ckRu2}`);
-          }
-          if (detObj2 && detObj2.composition) {
-            lines.push(`Состав: ${detObj2.composition}`);
-          }
-          if (detObj2 && detObj2.description) {
-            lines.push(`Описание:\n${detObj2.description}`);
-          }
-          if (ord.card_photo) {
-            lines.push('Открытка: фото добавлено');
-          } else if (detObj2.card_text) {
-            lines.push(`Открытка: ${detObj2.card_text}`);
-          } else if (ord.card_needed_flag === 1 || detObj2.card_needed) {
-            lines.push('Нужна открытка: да');
-          }
-          if (detObj2 && detObj2.comment) {
-            lines.push(`Комментарий: ${detObj2.comment}`);
-          }
-          const positionCost = await getDisplayPositionCost(ord, detObj2);
-          const pa2 = Number(ord.paid_amount || 0);
-          const rem2 = Math.max(positionCost - pa2, 0);
-          if ((ord.fulfillment_type || '') === 'delivery') {
-            const dc2 = (detObj2 && typeof detObj2.delivery_cost !== 'undefined') ? Number(detObj2.delivery_cost || 0) : undefined;
-            if (typeof dc2 !== 'undefined') {
-              lines.push(`Стоимость доставки: ${formatMoney(dc2)} ₽`);
-            }
-            if (typeof detObj2.delivery_paid !== 'undefined') {
-              lines.push(`Оплата доставки: ${detObj2.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-            }
-          }
-          lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
-          if (ord.payment_status_name) lines.push(`Статус оплаты: ${ord.payment_status_name}`);
-          lines.push(`Оплачено: ${formatMoney(pa2)} ₽`);
-          lines.push(`Остаток: ${formatMoney(rem2)} ₽`);
-          lines.push(`Контакты:`);
-          lines.push(`Клиент: ${ord.client_name}, ${ord.client_phone}`);
-          if (ord.fulfillment_type !== 'pickup') {
-            lines.push(`Получатель: ${ord.recipient_name}, ${ord.recipient_phone}${ord.recipient_address ? ', ' + ord.recipient_address : ''}`);
-          }
-          {
-            const fidList2 = (Array.isArray(ord.photos) ? ord.photos : []).filter(Boolean);
-            const count2 = fidList2.length + (ord.card_photo ? 1 : 0);
-            if (count2 > 0) lines.push(`Фото: ${count2}`);
-          }
-        }
-        const buttonsGroup = [];
-        const statusGroup = String(o.status || '');
-        if (statusGroup !== 'assembled') {
-          buttonsGroup.push([{ text: '📦 Собран', callback_data: `order_assembled_${o.id}` }]);
-        }
-        if (statusGroup !== 'accepted' && statusGroup !== 'created') {
-          buttonsGroup.push([{ text: '✅ Принят', callback_data: `order_accept_${o.id}` }]);
-        }
-        buttonsGroup.push([{ text: '✅ Выполнено', callback_data: `order_complete_${o.id}` }]);
-        buttonsGroup.push([{ text: '✏️ Редактировать', callback_data: `order_edit_group_${headerNumber}` }]);
-        buttonsGroup.push([{ text: '⛔ Отменить заказ', callback_data: `order_cancel_${o.id}` }]);
-        buttonsGroup.push([{ text: '🏠 Главное меню', callback_data: 'back_menu' }]);
-        const kbGroup = { reply_markup: { inline_keyboard: buttonsGroup } };
-        await bot.sendMessage(chatId, lines.join('\n'), kbGroup);
-        for (const ord of fullOrders) {
-          const fidList2 = (Array.isArray(ord.photos) ? ord.photos : []).filter(Boolean);
-          if (fidList2.length) {
-            try {
-              if (fidList2.length === 1) {
-                await bot.sendPhoto(chatId, fidList2[0]);
-              } else if (fidList2.length > 1) {
-                if (bot.sendMediaGroup) {
-                  const chunkSize2 = 10;
-                  for (let j = 0; j < fidList2.length; j += chunkSize2) {
-                    const chunk2 = fidList2.slice(j, j + chunkSize2).map(fid => ({ type: 'photo', media: fid }));
-                    await bot.sendMediaGroup(chatId, chunk2);
-                  }
-                } else {
-                  for (const fid of fidList2) {
-                    await bot.sendPhoto(chatId, fid);
-                  }
-                }
-              }
-            } catch (e) {
-              logger.error('Error sending order photos', e);
-            }
-          }
-          if (ord.card_photo) {
-            try {
-              await bot.sendPhoto(chatId, ord.card_photo);
-            } catch (e) {
-              logger.error('Error sending card photo', e);
-            }
-          }
-          const detForPhoto2 = (ord.details && typeof ord.details === 'object') ? ord.details : {};
-          if (detForPhoto2 && detForPhoto2.source === 'web_app' && detForPhoto2.catalog_item_id) {
-            try {
-              const imgPath2 = await orderService.getCatalogImagePathById(detForPhoto2.catalog_item_id);
-              const localPath2 = buildWebAppImageUrl(imgPath2);
-              if (localPath2) {
-                await sendPhotoToChannel(chatId, localPath2);
-              }
-            } catch (e) {
-              logger.error('Error sending web_app catalog photo', e);
-            }
-          }
-        }
-      } else {
-        const lines = [];
-        const orderNumber = o.number || o.id;
-        lines.push(`Заказ №${orderNumber}`);
-        lines.push(`Тип получения: ${o.fulfillment_type === 'pickup' ? 'Самовывоз' : 'Доставка'}`);
-        lines.push(`Магазин: ${o.address_name}`);
-        lines.push(`Дата: ${formatDateRu(o.execution_date)}`);
-        lines.push(`Время: ${formatTimeDisplay(o)}`);
-        lines.push(`Тип заказа: ${o.order_type_called || ''}`);
-        if (o.creator_full_name) {
-          lines.push(`Оформил: ${o.creator_full_name}`);
-        }
-        const detObj = (o.details && typeof o.details === 'object') ? o.details : {};
-        if (detObj && detObj.composition_kind) {
-          const ck = String(detObj.composition_kind || '');
-          const ckRu = ck === 'box' ? 'коробка' : ck === 'bouquet' ? 'букет' : ck;
-          lines.push(`Тип композиции: ${ckRu}`);
-        }
-        if (detObj && detObj.composition) {
-          lines.push(`Состав: ${detObj.composition}`);
-        }
-        if (detObj && detObj.description) {
-          lines.push(`Описание:\n${detObj.description}`);
-        }
-        if (o.card_photo) {
-          lines.push('Открытка: фото добавлено');
-        } else if (detObj.card_text) {
-          lines.push(`Открытка: ${detObj.card_text}`);
-        } else if (o.card_needed_flag === 1 || detObj.card_needed) {
-          lines.push('Нужна открытка: да');
-        }
-        if (detObj && detObj.comment) {
-          lines.push(`Комментарий: ${detObj.comment}`);
-        }
-        const positionCost = await getDisplayPositionCost(o, detObj);
-        const pa = Number(o.paid_amount || 0);
-        const rem = Math.max(positionCost - pa, 0);
-        if ((o.fulfillment_type || '') === 'delivery') {
-          const dc = (detObj && typeof detObj.delivery_cost !== 'undefined') ? Number(detObj.delivery_cost || 0) : undefined;
-          if (typeof dc !== 'undefined') {
-            lines.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
-          }
-          if (typeof detObj.delivery_paid !== 'undefined') {
-            lines.push(`Оплата доставки: ${detObj.delivery_paid ? 'оплачено' : 'не оплачено'}`);
-          }
-        }
-        lines.push(`Стоимость позиции: ${formatMoney(positionCost)} ₽`);
-        if (o.payment_status_name) lines.push(`Статус оплаты: ${o.payment_status_name}`);
-        lines.push(`Оплачено: ${formatMoney(pa)} ₽`);
-        lines.push(`Остаток: ${formatMoney(rem)} ₽`);
-        lines.push(`Контакты:`);
-        lines.push(`Клиент: ${o.client_name}, ${o.client_phone}`);
-        if (o.fulfillment_type !== 'pickup') {
-          lines.push(`Получатель: ${o.recipient_name}, ${o.recipient_phone}${o.recipient_address ? ', ' + o.recipient_address : ''}`);
-        }
-        {
-          const fidList = (Array.isArray(o.photos) ? o.photos : []).filter(Boolean);
-          const count = fidList.length + (o.card_photo ? 1 : 0);
-          if (count > 0) lines.push(`Фото: ${count}`);
-        }
-        const buttons = [];
-        const statusSingle = String(o.status || '');
-        if (statusSingle !== 'assembled') {
-          buttons.push([{ text: '📦 Собран', callback_data: `order_assembled_${o.id}` }]);
-        }
-        if (statusSingle !== 'accepted' && statusSingle !== 'created') {
-          buttons.push([{ text: '✅ Принят', callback_data: `order_accept_${o.id}` }]);
-        }
-        buttons.push([{ text: '✅ Выполнено', callback_data: `order_complete_${o.id}` }]);
-        buttons.push([{ text: '✏️ Редактировать', callback_data: `order_edit_${o.id}` }]);
-        buttons.push([{ text: '⛔ Отменить заказ', callback_data: `order_cancel_${o.id}` }]);
-        buttons.push([{ text: '🏠 Главное меню', callback_data: 'back_menu' }]);
-        const kb = { reply_markup: { inline_keyboard: buttons } };
-        await bot.sendMessage(chatId, lines.join('\n'), kb);
-        const fidList = (Array.isArray(o.photos) ? o.photos : []).filter(Boolean);
-        if (fidList.length) {
-          try {
-            if (fidList.length === 1) {
-              await bot.sendPhoto(chatId, fidList[0]);
-            } else if (fidList.length > 1) {
-              if (bot.sendMediaGroup) {
-                const chunkSize = 10;
-                for (let i = 0; i < fidList.length; i += chunkSize) {
-                  const chunk = fidList.slice(i, i + chunkSize).map(fid => ({ type: 'photo', media: fid }));
-                  await bot.sendMediaGroup(chatId, chunk);
-                }
-              } else {
-                for (const fid of fidList) {
-                  await bot.sendPhoto(chatId, fid);
-                }
-              }
-            }
-          } catch (e) {
-            logger.error('Error sending order photos', e);
-          }
-        }
-        if (o.card_photo) {
-          try {
-            await bot.sendPhoto(chatId, o.card_photo);
-          } catch (e) {
-            logger.error('Error sending card photo', e);
-          }
-        }
-        const detForPhoto = (o.details && typeof o.details === 'object') ? o.details : {};
-        if (detForPhoto && detForPhoto.source === 'web_app' && detForPhoto.catalog_item_id) {
-          try {
-            const imgPath = await orderService.getCatalogImagePathById(detForPhoto.catalog_item_id);
-            const localPath = buildWebAppImageUrl(imgPath);
-            if (localPath) {
-              await sendPhotoToChannel(chatId, localPath);
-            }
-          } catch (e) {
-            logger.error('Error sending web_app catalog photo', e);
-          }
-        }
-      }
+      if (!Number.isFinite(id)) return;
+      await showOrderDetailByOrderId(bot, chatId, userId, id);
+      return;
     } else if (data === 'order_accept_paid_full' || data === 'order_accept_paid_partial' || data === 'order_accept_paid_none') {
       const stPay = getUserState(userId);
       if ((stPay || {}).state !== 'order_accept_payment_choice') {
@@ -1531,8 +1573,22 @@ async function handleCallback(bot, ctx, data) {
         setUserState(userId, 'order_edit_order_type', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: st2.data.photos, contacts: st2.data.contacts, order_id: st2.data.order_id });
         await bot.sendMessage(chatId, 'Выберите тип заказа:', await getOrderTypeKeyboard(st2.data.user.rights_name));
       } else if (key === 'total_cost') {
-        setUserState(userId, 'order_edit_total_cost', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: st2.data.photos, contacts: st2.data.contacts, order_id: st2.data.order_id });
-        await bot.sendMessage(chatId, 'Введите стоимость заказа:');
+        const draft = st2.data.draft || {};
+        const det = st2.data.details || {};
+        const ft = (draft.fulfillment_type || det.fulfillment_type || '').toString();
+        setUserState(userId, 'order_edit_total_cost', {
+          user: st2.data.user,
+          draft,
+          details: det,
+          photos: st2.data.photos,
+          contacts: st2.data.contacts,
+          order_id: st2.data.order_id,
+        });
+        if (ft === 'delivery') {
+          await bot.sendMessage(chatId, 'Введите стоимость заказа (без доставки):');
+        } else {
+          await bot.sendMessage(chatId, 'Введите стоимость заказа:');
+        }
       } else if (key === 'payment_status') {
         setUserState(userId, 'order_edit_payment_status', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: st2.data.photos, contacts: st2.data.contacts, order_id: st2.data.order_id });
         await bot.sendMessage(chatId, 'Выберите статус оплаты:', getPaymentStatusKeyboard());
@@ -2030,17 +2086,103 @@ async function handleOrderMessage(bot, msg) {
         await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details: st.data.details, photos: st.data.photos, contacts: st.data.contacts, card_photo: st.data.card_photo || null, order_id: st.data.order_id });
       }
     } else if (st.state === 'order_edit_total_cost') {
+      const draft = st.data.draft || {};
+      const det = st.data.details || {};
+      const ft = (draft.fulfillment_type || det.fulfillment_type || '').toString();
       const res = parseMoney(msg.text);
       if (!res.ok) {
-        await bot.sendMessage(chatId, `❌ ${res.message}\nВведите стоимость заказа:`);
+        const prompt =
+          ft === 'delivery'
+            ? 'Введите стоимость заказа (без доставки):'
+            : 'Введите стоимость заказа:';
+        await bot.sendMessage(chatId, `❌ ${res.message}\n${prompt}`);
         return;
       }
-      const draft = st.data.draft || {};
+      // #region agent log
+      try {
+        fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '6db2c2',
+          },
+          body: JSON.stringify({
+            sessionId: '6db2c2',
+            runId: 'pre-fix',
+            hypothesisId: 'H1,H2,H3',
+            location: 'order.js:order_edit_total_cost',
+            message: 'Edit total cost for order',
+            data: {
+              orderId: st.data.order_id,
+              number: (st.data.draft && st.data.draft.number) || null,
+              fulfillment_type: ft,
+              old_total_cost: draft.total_cost ?? null,
+              new_total_cost: res.value,
+              payment_status_name: draft.payment_status_name || null,
+              old_paid_amount: draft.paid_amount ?? null,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+      } catch (_) {}
+      // #endregion
       draft.total_cost = res.value;
+      // Для заказов из интернет-магазина синхронизируем также базовую стоимость позиции
+      if (draft.order_source === 1) {
+        draft.cost = res.value;
+        if (det && typeof det === 'object') {
+          det.catalog_item_price = res.value;
+        }
+      }
       if ((draft.payment_status_name || '').toLowerCase() === 'оплачен полностью') {
         draft.paid_amount = res.value;
       }
-      await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details: st.data.details, photos: st.data.photos, contacts: st.data.contacts, card_photo: st.data.card_photo || null, order_id: st.data.order_id });
+      if (ft === 'delivery') {
+        setUserState(userId, 'order_edit_delivery_cost', {
+          user: st.data.user,
+          draft,
+          details: det,
+          photos: st.data.photos,
+          contacts: st.data.contacts,
+          card_photo: st.data.card_photo || null,
+          order_id: st.data.order_id,
+        });
+        await bot.sendMessage(chatId, 'Введите стоимость доставки:');
+      } else {
+        await showConfirm(bot, userId, chatId, {
+          user: st.data.user,
+          draft,
+          details: det,
+          photos: st.data.photos,
+          contacts: st.data.contacts,
+          card_photo: st.data.card_photo || null,
+          order_id: st.data.order_id,
+        });
+      }
+    } else if (st.state === 'order_edit_delivery_cost') {
+      const res = parseMoney(msg.text);
+      if (!res.ok) {
+        await bot.sendMessage(chatId, `❌ ${res.message}\nВведите стоимость доставки:`);
+        return;
+      }
+      const draft = st.data.draft || {};
+      const det = st.data.details || {};
+      draft.delivery_cost = res.value;
+      if (det && typeof det === 'object') {
+        det.delivery_cost = res.value;
+      }
+      const base = Number(draft.total_cost || 0);
+      const del = Number(draft.delivery_cost || 0);
+      draft.total_delivery_cost = base + del;
+      await showConfirm(bot, userId, chatId, {
+        user: st.data.user,
+        draft,
+        details: det,
+        photos: st.data.photos,
+        contacts: st.data.contacts,
+        card_photo: st.data.card_photo || null,
+        order_id: st.data.order_id,
+      });
     } else if (st.state === 'order_edit_paid_amount') {
       const res = parseMoney(msg.text);
       if (!res.ok) {
@@ -2048,6 +2190,33 @@ async function handleOrderMessage(bot, msg) {
         return;
       }
       const draft = st.data.draft || {};
+      // #region agent log
+      try {
+        fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '6db2c2',
+          },
+          body: JSON.stringify({
+            sessionId: '6db2c2',
+            runId: 'pre-fix',
+            hypothesisId: 'H2,H3',
+            location: 'order.js:order_edit_paid_amount',
+            message: 'Edit paid amount for order',
+            data: {
+              orderId: st.data.order_id,
+              number: (st.data.draft && st.data.draft.number) || null,
+              total_cost: draft.total_cost ?? null,
+              old_paid_amount: draft.paid_amount ?? null,
+              new_paid_amount: res.value,
+              payment_status_name: draft.payment_status_name || null,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+      } catch (_) {}
+      // #endregion
       draft.paid_amount = res.value;
       await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details: st.data.details, photos: st.data.photos, contacts: st.data.contacts, card_photo: st.data.card_photo || null, order_id: st.data.order_id });
     } else if (st.state === 'order_edit_date') {
@@ -2086,6 +2255,35 @@ async function handleOrderMessage(bot, msg) {
 function buildSummary(draft, details, photos, contacts, cardPhoto, orderId, typeCalled, orderNumber) {
   const lines = [];
   const displayNum = (orderNumber != null && orderNumber !== '') ? orderNumber : (orderId != null ? orderId : null);
+  // #region agent log
+  try {
+    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': '6db2c2',
+      },
+      body: JSON.stringify({
+        sessionId: '6db2c2',
+        runId: 'pre-fix',
+        hypothesisId: 'H1,H2,H3',
+        location: 'order.js:buildSummary',
+        message: 'Building order summary',
+        data: {
+          orderId,
+          orderNumber: displayNum,
+          fulfillment_type: draft.fulfillment_type || null,
+          total_cost: draft.total_cost ?? null,
+          delivery_cost: draft.delivery_cost ?? null,
+          total_delivery_cost: draft.total_delivery_cost ?? null,
+          paid_amount: draft.paid_amount ?? null,
+          payment_status_name: draft.payment_status_name || null,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  } catch (_) {}
+  // #endregion
   if (displayNum != null && displayNum !== '') {
     lines.push(`Итоговый заказ №${displayNum}:`);
   } else {
@@ -2118,19 +2316,26 @@ function buildSummary(draft, details, photos, contacts, cardPhoto, orderId, type
   if (details && details.comment) {
     lines.push(`Комментарий: ${details.comment}`);
   }
-  if ((draft.fulfillment_type || '') === 'delivery') {
-    if (typeof details.delivery_cost !== 'undefined') {
-      lines.push(`Стоимость доставки: ${formatMoney(details.delivery_cost || 0)} ₽`);
+  const ftSum = (draft.fulfillment_type || '').toLowerCase();
+  let deliveryForBalance = 0;
+  if (ftSum === 'delivery') {
+    const dc = typeof draft.delivery_cost !== 'undefined'
+      ? Number(draft.delivery_cost || 0)
+      : (typeof details.delivery_cost !== 'undefined' ? Number(details.delivery_cost || 0) : undefined);
+    if (typeof dc !== 'undefined') {
+      lines.push(`Стоимость доставки: ${formatMoney(dc)} ₽`);
+      deliveryForBalance = dc;
     }
     if (typeof details.delivery_paid !== 'undefined') {
       lines.push(`Оплата доставки: ${details.delivery_paid ? 'оплачено' : 'не оплачено'}`);
     }
   }
   if (typeof draft.total_cost !== 'undefined') {
-    const tc = Number(draft.total_cost || 0);
+    const base = Number(draft.total_cost || 0);
     const pa = Number(draft.paid_amount || 0);
-    const rem = Math.max(tc - pa, 0);
-    lines.push(`Стоимость: ${formatMoney(tc)} ₽`);
+    const grand = base + deliveryForBalance;
+    const rem = Math.max(grand - pa, 0);
+    lines.push(`Стоимость: ${formatMoney(base)} ₽`);
     if (draft.payment_status_name) lines.push(`Статус оплаты: ${draft.payment_status_name}`);
     lines.push(`Оплачено: ${formatMoney(pa)} ₽`);
     lines.push(`Остаток: ${formatMoney(rem)} ₽`);
@@ -2169,6 +2374,7 @@ async function handleConfirmOrEdit(bot, ctx, data) {
           store_name: draft.store_name,
           execution_date: draft.execution_date,
           execution_time: draft.execution_time,
+          execution_time_to: draft.execution_time_to,
           order_type: draft.order_type,
           creator_full_name: draft.creator_name || null,
           details,
@@ -2205,7 +2411,38 @@ async function handleConfirmOrEdit(bot, ctx, data) {
       } catch (_) {}
       const orderForSummary = await orderService.getOrderWithDetails(finalId);
       const orderNum = orderForSummary && orderForSummary.number != null ? orderForSummary.number : finalId;
-      const summaryText = buildSummary(draft, details, photos, contacts, cardPhoto, finalId, typeCalled2, orderNum);
+      let summaryText = buildSummary(draft, details, photos, contacts, cardPhoto, finalId, typeCalled2, orderNum);
+
+      // Для доставки и многопозиционных заказов добавляем агрегированные итоги по номеру
+      if (orderForSummary && (orderForSummary.fulfillment_type || '') === 'delivery' && orderNum != null) {
+        try {
+          const groupOrders = await orderService.getOrdersByNumber(orderNum);
+          if (Array.isArray(groupOrders) && groupOrders.length > 1) {
+            let sumFlowers = 0;
+            let sumDelivery = 0;
+
+            for (const o of groupOrders) {
+              const detG = (o.details && typeof o.details === 'object') ? o.details : {};
+              const base = Number((o.total_cost != null ? o.total_cost : o.cost != null ? o.cost : 0) || 0);
+              const del = Number(detG.delivery_cost || 0) || 0;
+              sumFlowers += base;
+              sumDelivery += del;
+            }
+
+            const sumTotal = sumFlowers + sumDelivery;
+            const aggLines = [];
+            aggLines.push('');
+            aggLines.push('Итого по заказу:');
+            aggLines.push(`- Цветы: ${formatMoney(sumFlowers)} ₽`);
+            aggLines.push(`- Доставка: ${formatMoney(sumDelivery)} ₽`);
+            aggLines.push(`- Всего (цветы + доставка): ${formatMoney(sumTotal)} ₽`);
+
+            summaryText = `${summaryText}\n\n${aggLines.join('\n')}`;
+          }
+        } catch (_) {
+          // если агрегирование не удалось, оставляем базовый текст подтверждения
+        }
+      }
       if (existingId && !isActivation) {
         try {
           const rows = await orderService.getOrderChannelMessages(existingId);
@@ -2423,4 +2660,5 @@ module.exports = {
   handleCallback,
   handleOrderMessage,
   handleConfirmOrEdit,
+  showOrderDetailByOrderId,
 };

@@ -1,5 +1,7 @@
 const pool = require('../config/database');
 const logger = require('../utils/logger');
+const fs = require('fs');
+const DEBUG_LOG_PATH = process.env.DEBUG_LOG_PATH || '/root/.cursor/debug-6db2c2.log';
 
 async function reserveOrderNumber(client, source) {
   const maxAttempts = 50;
@@ -603,15 +605,67 @@ async function listActiveOrdersByAddressPage(addressId, limit = 10, offset = 0) 
             COALESCE(o.number, o.id) AS number,
             MIN(o.execution_date) AS execution_date,
             MIN(o.execution_time) AS execution_time,
+            (array_agg(o.status ORDER BY o.id))[1] AS status,
             a.name AS address_name,
             COUNT(*) AS positions_count
      FROM orders o
      JOIN address a ON a.id = o.address_id
      WHERE o.status IN ('active','assembled','processing','accepted') AND o.address_id = $1
      GROUP BY COALESCE(o.number, o.id), a.name
-     ORDER BY MIN(o.execution_date) ASC, MIN(o.execution_time) ASC
+     ORDER BY MIN(o.execution_date) ASC, MIN(o.execution_time) ASC, MIN(o.id) ASC
      LIMIT $2 OFFSET $3`,
     [addressId, limit, offset]
+  );
+  // #region agent log
+  try {
+    const ids = (res.rows || []).map((r) => r.id);
+    const has1091 = ids.includes(1091);
+    const row1091 = (res.rows || []).find((r) => r.id === 1091 || r.number === 1091);
+    const check1091 = await pool.query('SELECT id, number, address_id, status, execution_date, execution_time FROM orders WHERE id = 1091');
+    const o1091 = check1091.rows[0] || null;
+    fs.appendFileSync(DEBUG_LOG_PATH, JSON.stringify({ sessionId: '6db2c2', location: 'orderService.js:listActiveOrdersByAddressPage', message: 'list result', data: { addressId, limit, offset, count: (res.rows || []).length, ids, has1091, row1091: row1091 || null, order1091InDb: o1091 }, timestamp: Date.now(), hypothesisId: 'A,B,C,D' }) + '\n');
+  } catch (_) {}
+  // #endregion
+  return res.rows;
+}
+
+async function listOrdersByAddressAndStatusPage(addressId, status, limit = 10, offset = 0) {
+  const res = await pool.query(
+    `SELECT MIN(o.id) AS id,
+            COALESCE(o.number, o.id) AS number,
+            MIN(o.execution_date) AS execution_date,
+            MIN(o.execution_time) AS execution_time,
+            (array_agg(o.status ORDER BY o.id))[1] AS status,
+            a.name AS address_name,
+            COUNT(*) AS positions_count
+     FROM orders o
+     JOIN address a ON a.id = o.address_id
+     WHERE o.address_id = $1 AND o.status = $2
+     GROUP BY COALESCE(o.number, o.id), a.name
+     ORDER BY MIN(o.execution_date) ASC, MIN(o.execution_time) ASC, MIN(o.id) ASC
+     LIMIT $3 OFFSET $4`,
+    [addressId, status, limit, offset]
+  );
+  return res.rows;
+}
+
+async function listOrdersByAddressAndFulfillmentPage(addressId, fulfillmentType, limit = 10, offset = 0) {
+  const res = await pool.query(
+    `SELECT MIN(o.id) AS id,
+            COALESCE(o.number, o.id) AS number,
+            MIN(o.execution_date) AS execution_date,
+            MIN(o.execution_time) AS execution_time,
+            (array_agg(o.status ORDER BY o.id))[1] AS status,
+            a.name AS address_name,
+            COUNT(*) AS positions_count
+     FROM orders o
+     JOIN address a ON a.id = o.address_id
+     WHERE o.address_id = $1 AND o.fulfillment_type = $2
+       AND o.status IN ('active','processing','accepted','assembled')
+     GROUP BY COALESCE(o.number, o.id), a.name
+     ORDER BY MIN(o.execution_date) ASC, MIN(o.execution_time) ASC, MIN(o.id) ASC
+     LIMIT $3 OFFSET $4`,
+    [addressId, fulfillmentType, limit, offset]
   );
   return res.rows;
 }
@@ -681,7 +735,8 @@ async function getOrderWithDetails(orderId) {
        GROUP BY o.id, o.number, a.name, ot.name, ot.called, d.details, c.client_name, c.client_phone, c.recipient_name, c.recipient_phone, c.recipient_address, cp.file_id, ps.name`,
       [orderId]
     );
-    return res.rows[0] || null;
+    const row = res.rows[0] || null;
+    return row;
   } else {
     const res = await pool.query(
       `SELECT o.id, o.number, o.fulfillment_type, o.execution_date, o.execution_time, o.execution_time_to, o.status,
@@ -749,11 +804,20 @@ async function updateOrderPaidAmount(orderId, amount) {
 }
 
 async function updateOrderDeliveryCost(orderId, cost) {
+  const value = Number(cost) || 0;
   await pool.query(
     `UPDATE order_details
      SET details = jsonb_set(COALESCE(details, '{}'::jsonb), '{delivery_cost}', to_jsonb($2::numeric), true)
      WHERE order_id = $1`,
-    [orderId, cost]
+    [orderId, value]
+  );
+  await pool.query(
+    `UPDATE orders
+     SET delivery_cost = $2,
+         total_delivery_cost = $2,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [orderId, value]
   );
 }
 
@@ -841,6 +905,8 @@ module.exports = {
   listActiveOrders,
   listActiveOrdersByAddress,
   listActiveOrdersByAddressPage,
+  listOrdersByAddressAndStatusPage,
+  listOrdersByAddressAndFulfillmentPage,
   countActiveOrdersByAddress,
   getOrderWithDetails,
   completeOrder,

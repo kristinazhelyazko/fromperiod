@@ -20,6 +20,7 @@ function getMainMenuKeyboard(userRights) {
 
   buttons.push([{ text: '📝 Создать заказ', callback_data: 'order_create' }]);
   buttons.push([{ text: '📦 Управление заказами', callback_data: 'order_manage' }]);
+  buttons.push([{ text: '🔍 Фильтры', callback_data: 'filters' }]);
   buttons.push([{ text: '🚪 Выйти из аккаунта', callback_data: 'logout' }]);
 
   // Кнопки только для администратора

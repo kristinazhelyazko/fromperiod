@@ -8,7 +8,9 @@ const storeState = {
 const STORE_IMG_BASE =
   (window.__IMG_BASE_URL__ && window.__IMG_BASE_URL__.trim())
     ? window.__IMG_BASE_URL__.replace(/\/$/, '')
-    : 'https://fromperiod.ru';
+    : (typeof window !== 'undefined' && window.location && window.location.origin
+        ? window.location.origin.replace(/\/$/, '')
+        : 'https://fromperiod.ru');
 
 function buildCatalogImageUrl(imagePath) {
   if (!imagePath) return '';
@@ -42,6 +44,12 @@ async function selectStoreAddress(addressId, addressName) {
 
   try {
     const items = await apiRequest('/catalog');
+    // #region agent log
+    const item55 = (items || []).find(function(i){ return i.id === 55; });
+    var _base = (window.__IMG_BASE_URL__ && window.__IMG_BASE_URL__.trim()) ? window.__IMG_BASE_URL__.replace(/\/$/, '') : 'https://fromperiod.ru';
+    var _url55 = item55 ? _base + encodeURI(item55.image_path || '') : '';
+    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'store.js:selectStoreAddress',message:'catalog items and image URL for 55',data:{itemCount:(items||[]).length,has55:!!item55,item55:item55?{id:item55.id,name:item55.name,image_path:item55.image_path}:null,imgBase:_base,builtUrl55:_url55,origin:window.location.origin},timestamp:Date.now(),hypothesisId:'B,C'})}).catch(function(){});
+    // #endregion
     // image_path храним как относительный путь из БД (/elements/...), а полный URL собираем при отрисовке
     storeState.items = items.map((item) => ({
       id: item.id,
@@ -84,6 +92,9 @@ function renderCatalog() {
     const img = document.createElement('img');
     img.className = 'catalog-image';
     img.src = buildCatalogImageUrl(item.image_path);
+    // #region agent log
+    if (item.id === 55) fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'store.js:renderCatalog',message:'img src for item 55',data:{itemId:item.id,image_path:item.image_path,src:img.src},timestamp:Date.now(),hypothesisId:'C,E'})}).catch(function(){});
+    // #endregion
     img.alt = item.name;
     imgWrapper.appendChild(img);
 
