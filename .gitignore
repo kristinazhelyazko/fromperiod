@@ -10,6 +10,9 @@ build/
 *.xls
 temp/
 
+# Генерируется scripts/generatePositionSql.js
+position.sql
+
 # Next.js build output (собирается через npm run build в backend/ и frontend_client/)
 backend/.next/
 frontend_client/.next/
