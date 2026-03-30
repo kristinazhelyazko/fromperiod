@@ -1,5 +1,7 @@
 node_modules/
 .env
+.env.*.bak
+*.local.bak
 *.log
 .DS_Store
 dist/
@@ -7,4 +9,22 @@ build/
 *.xlsx
 *.xls
 temp/
+
+# Next.js build output (собирается через npm run build в backend/ и frontend_client/)
+backend/.next/
+frontend_client/.next/
+
+# Локальные секреты и env Next
+**/.env.local
+
+# Резервные дампы БД (не нужны для сборки; схема — migrations/)
+exports/
+
+# Локальные бэкапы и патчи (не коммитить)
+exports_bak_*/
+exports_local_backup_*/
+local_before_test_pstock.patch
+
+# Устаревший дубликат Next (раньше submodule); при необходимости — отдельный репозиторий
+frontend/
 

@@ -3,7 +3,7 @@
 Этот файл описывает, как развернуть актуальную версию проекта в продакшене:
 
 - бот для сотрудников (staff‑бот на Node.js),
-- мини‑приложение для сотрудников (Node + фронт из public/ или Next.js из frontend/),
+- мини‑приложение для сотрудников (Node + фронт из public/; дополнительные API — Next.js в backend/),
 - бот для клиентов (client‑бот),
 - backend‑слой (Next.js, каталог backend/ — API для отчётов и служебных задач),
 - фронтенд приложения для клиентов (Next.js, каталог frontend_client/),
@@ -184,32 +184,9 @@ npm run build
 npm start   # слушает порт 3001
 ```
 
-## 6. Альтернативный фронтенд для сотрудников (frontend/)
+## 6. Next.js в каталоге backend/ (API и служебные маршруты)
 
-Каталог frontend/ содержит Next.js‑версию приложения для сотрудников. 
-В текущей конфигурации основной staff‑веб отдаётся через сервис web (server.js + public/).
-Next‑вариант можно разворачивать отдельно, если потребуется.
-
-### Вариант А: через Docker
-
-```bash
-cd /path/to/pstock/frontend
-docker build -t pstock-frontend .
-
-docker run -d \
-  --name pstock-frontend \
-  -p 3003:3000 \
-  pstock-frontend
-```
-
-### Вариант Б: без Docker
-
-```bash
-cd /path/to/pstock/frontend
-npm install
-npm run build
-npm run start   # по умолчанию порт 3000
-```
+Дополнительный Next.js‑слой в `backend/` используется для API (отчёты, каталог и т.д.), а не как замена staff‑интерфейса из `public/`. Сборка и запуск — как в разделе 5 выше (`backend/Dockerfile` или `npm run build` / `npm start` на хосте).
 
 ## 7. Быстрая проверка после деплоя
 
@@ -229,7 +206,7 @@ npm run start   # по умолчанию порт 3000
 4. Логи:
    - docker compose logs -f bot web,
    - docker logs pstock-backend,
-   - docker logs pstock-frontend,
+   - при отдельном контейнере Next из backend/ — соответствующие `docker logs`,
    - pm2 logs client-bot (если используется pm2).
 
 Если все проверки проходят, новая версия проекта (оба бота и клиентское приложение) успешно запущена и использует общую базу данных.
