@@ -42,6 +42,12 @@ const {
   handleFilterTypePrev,
   handleFilterTypeNext,
 } = require('./handlers/filters');
+const {
+  handleStoreManageStart,
+  handleStoreManageCallback,
+  handleStoreManageMessage,
+  isStoreManageState,
+} = require('./handlers/storeManage');
 const { handleError } = require('./middleware/errorHandler');
 const logger = require('../utils/logger');
 const pool = require('../config/database');
@@ -207,6 +213,8 @@ async function start() {
       }
       if ((st.state || '').startsWith('order_')) {
         await handleOrderMessage(bot, msg);
+      } else if (isStoreManageState(st.state)) {
+        await handleStoreManageMessage(bot, msg);
       } else {
         await handleMessage(bot, msg);
       }
@@ -350,6 +358,12 @@ async function start() {
         await handleFilterPrev(bot, ctx);
       } else if (data === 'filter_next') {
         await handleFilterNext(bot, ctx);
+      } else if (data === 'store_manage' || String(data || '').startsWith('store_manage_')) {
+        if (data === 'store_manage') {
+          await handleStoreManageStart(bot, ctx);
+        } else {
+          await handleStoreManageCallback(bot, ctx, data);
+        }
       } else if (data === 'back_menu') {
         const stBack = getUserState(query.from.id);
         const stateStr = String(stBack.state || '');

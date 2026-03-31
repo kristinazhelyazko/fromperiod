@@ -20,8 +20,21 @@ async function apiRequest(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      const contentType = String(response.headers.get('content-type') || '');
+      let message = '';
+      try {
+        const parsed = await response.json();
+        message = (parsed && typeof parsed.error === 'string') ? parsed.error : JSON.stringify(parsed);
+      } catch (_) {
+        try {
+          const txt = await response.text();
+          message = txt ? txt.slice(0, 180) : '';
+        } catch (_) {
+          message = '';
+        }
+      }
+      const hint = message ? `: ${message}` : '';
+      throw new Error(`HTTP ${response.status} (${contentType || 'no content-type'}) @ ${url}${hint}`);
     }
 
     return await response.json();

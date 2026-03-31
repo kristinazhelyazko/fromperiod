@@ -31,6 +31,8 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - ./elements:/app/elements
     restart: unless-stopped
 
   client_frontend:
@@ -62,6 +64,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./elements:/app/elements
     command: ["sh","-c","node migrations/run.js && node bot/index.js"]
     restart: unless-stopped
 

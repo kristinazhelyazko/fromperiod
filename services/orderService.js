@@ -1,7 +1,5 @@
 const pool = require('../config/database');
 const logger = require('../utils/logger');
-const fs = require('fs');
-const DEBUG_LOG_PATH = process.env.DEBUG_LOG_PATH || '/root/.cursor/debug-6db2c2.log';
 
 async function reserveOrderNumber(client, source) {
   const maxAttempts = 50;
@@ -616,16 +614,6 @@ async function listActiveOrdersByAddressPage(addressId, limit = 10, offset = 0) 
      LIMIT $2 OFFSET $3`,
     [addressId, limit, offset]
   );
-  // #region agent log
-  try {
-    const ids = (res.rows || []).map((r) => r.id);
-    const has1091 = ids.includes(1091);
-    const row1091 = (res.rows || []).find((r) => r.id === 1091 || r.number === 1091);
-    const check1091 = await pool.query('SELECT id, number, address_id, status, execution_date, execution_time FROM orders WHERE id = 1091');
-    const o1091 = check1091.rows[0] || null;
-    fs.appendFileSync(DEBUG_LOG_PATH, JSON.stringify({ sessionId: '6db2c2', location: 'orderService.js:listActiveOrdersByAddressPage', message: 'list result', data: { addressId, limit, offset, count: (res.rows || []).length, ids, has1091, row1091: row1091 || null, order1091InDb: o1091 }, timestamp: Date.now(), hypothesisId: 'A,B,C,D' }) + '\n');
-  } catch (_) {}
-  // #endregion
   return res.rows;
 }
 

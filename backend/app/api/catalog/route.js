@@ -3,17 +3,29 @@ import logger from '../../../lib/logger.js';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(req) {
   try {
+    const { searchParams } = new URL(req.url);
+    const rawAddressId = Number.parseInt(String(searchParams.get('address_id') || ''), 10);
+    const addressId = Number.isInteger(rawAddressId) && rawAddressId >= 0 ? rawAddressId : 0;
     const result = await pool.query(
-      'SELECT id, name, price, image_path FROM catalog_item WHERE is_visible = TRUE ORDER BY id'
+      `SELECT
+         ci.id,
+         ci.name,
+         ci.price,
+         ci.image_path,
+         COALESCE(
+           json_agg(cip.image_path ORDER BY cip.sort_order) FILTER (WHERE cip.id IS NOT NULL),
+           '[]'::json
+         ) AS images
+       FROM catalog_item ci
+       LEFT JOIN catalog_item_photo cip ON cip.catalog_item_id = ci.id
+       WHERE ci.is_visible = TRUE
+         AND (ci.address_id = 0 OR ci.address_id = $1)
+       GROUP BY ci.id
+       ORDER BY ci.id`,
+      [addressId]
     );
-    // #region agent log
-    const rows = result.rows || [];
-    const ids = rows.map((r) => r.id);
-    const row55 = rows.find((r) => r.id === 55);
-    await fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'backend/app/api/catalog/route.js:GET',message:'catalog response',data:{count:rows.length,ids,has55:!!row55,row55:row55?{id:row55.id,name:row55.name,image_path:row55.image_path}:null},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     return Response.json(result.rows);
   } catch (error) {
     logger.error('catalog', error);

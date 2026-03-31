@@ -21,6 +21,7 @@ function getMainMenuKeyboard(userRights) {
   buttons.push([{ text: '📝 Создать заказ', callback_data: 'order_create' }]);
   buttons.push([{ text: '📦 Управление заказами', callback_data: 'order_manage' }]);
   buttons.push([{ text: '🔍 Фильтры', callback_data: 'filters' }]);
+  buttons.push([{ text: '🛍 Управление магазином', callback_data: 'store_manage' }]);
   buttons.push([{ text: '🚪 Выйти из аккаунта', callback_data: 'logout' }]);
 
   // Кнопки только для администратора
@@ -71,9 +72,7 @@ function getDeleteConfirmKeyboard(userId) {
   return {
     reply_markup: {
       inline_keyboard: [
-        [{ text: '✅ Подтвердить удаление', callback_data: `delete_user_confirm_${userId}` }],
-        [{ text: '❌ Отмена', callback_data: `delete_user_cancel_${userId}` }],
-        [{ text: '🏠 Главное меню', callback_data: 'back_menu' }],
+        [{ text: '✅ Да', callback_data: `delete_user_confirm_${userId}` }, { text: '❌ Нет', callback_data: `delete_user_cancel_${userId}` }],
       ],
     },
   };
@@ -365,6 +364,16 @@ function getYesNoKeyboard(yesKey, noKey) {
   };
 }
 
+function getConfirmKeyboard(yesKey, noKey) {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Да', callback_data: yesKey }, { text: '❌ Нет', callback_data: noKey }],
+      ],
+    },
+  };
+}
+
 function getPaymentStatusKeyboard() {
   return {
     reply_markup: {
@@ -416,4 +425,5 @@ module.exports = {
   getUserActionsKeyboard,
   getDeleteConfirmKeyboard,
   getRightsChangeKeyboard,
+  getConfirmKeyboard,
 };

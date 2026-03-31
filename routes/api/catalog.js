@@ -3,18 +3,52 @@ const router = express.Router();
 const pool = require('../../config/database');
 const logger = require('../../utils/logger');
 
+// GET /api/catalog/sections?address_id=... - список разделов каталога (фильтр по адресу)
+router.get('/sections', async (req, res, next) => {
+  try {
+    const rawAddressId = Number.parseInt(String(req.query.address_id || ''), 10);
+    const addressId = Number.isInteger(rawAddressId) && rawAddressId >= 0 ? rawAddressId : 0;
+
+    if (addressId > 0) {
+      const filtered = await pool.query(
+        'SELECT id, name FROM catalog_section WHERE address_id IS NULL OR address_id = $1 ORDER BY id',
+        [addressId]
+      );
+      res.json(filtered.rows);
+      return;
+    }
+
+    const result = await pool.query('SELECT id, name FROM catalog_section ORDER BY id');
+    res.json(result.rows);
+  } catch (error) {
+    logger.error('Error fetching catalog sections:', error);
+    next(error);
+  }
+});
+
 router.get('/', async (req, res, next) => {
   try {
+    const rawAddressId = Number.parseInt(String(req.query.address_id || ''), 10);
+    const addressId = Number.isInteger(rawAddressId) && rawAddressId >= 0 ? rawAddressId : 0;
     const result = await pool.query(
-      'SELECT id, name, price, image_path FROM catalog_item WHERE is_visible = TRUE ORDER BY id'
+      `SELECT
+         ci.id,
+         ci.name,
+         ci.price,
+         ci.section_id,
+         ci.image_path,
+         COALESCE(
+           json_agg(cip.image_path ORDER BY cip.sort_order) FILTER (WHERE cip.id IS NOT NULL),
+           '[]'::json
+         ) AS images
+       FROM catalog_item ci
+       LEFT JOIN catalog_item_photo cip ON cip.catalog_item_id = ci.id
+       WHERE ci.is_visible = TRUE
+         AND (ci.address_id = 0 OR ci.address_id = $1)
+       GROUP BY ci.id
+       ORDER BY ci.id`,
+      [addressId]
     );
-    // #region agent log
-    const ids = (result.rows || []).map((r) => r.id);
-    const row55 = result.rows.find((r) => r.id === 55);
-    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'routes/api/catalog.js:GET',message:'catalog response',data:{count:result.rows.length,ids,has55:!!row55,row55:row55?{id:row55.id,name:row55.name,image_path:row55.image_path}:null},timestamp:Date.now(),hypothesisId:'A,B'})}).catch(()=>{});
-    const row55Db = await pool.query('SELECT id, is_visible, image_path FROM catalog_item WHERE id = 55');
-    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'routes/api/catalog.js:GET',message:'catalog_item id=55 from DB',data:{row:row55Db.rows[0]||null},timestamp:Date.now(),hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
     res.json(result.rows);
   } catch (error) {
     logger.error('Error fetching catalog items:', error);

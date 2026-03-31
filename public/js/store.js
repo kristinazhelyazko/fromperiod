@@ -2,6 +2,8 @@ const storeState = {
   addressId: null,
   addressName: '',
   items: [],
+  sections: [],
+  selectedSectionId: null,
   checkoutItems: [],
 };
 
@@ -28,15 +30,23 @@ async function selectStoreAddress(addressId, addressName) {
   storeState.addressName = addressName;
 
   const label = document.getElementById('catalog-address-label');
-  label.textContent = `Заказ цветов в ${addressName}`;
+  label.textContent = `Заказ в ${addressName}`;
 
   try {
-    const items = await apiRequest('/catalog');
+    const sections = await apiRequest(`/catalog/sections?address_id=${encodeURIComponent(addressId)}`);
+    storeState.sections = Array.isArray(sections) ? sections : [];
+    storeState.selectedSectionId = storeState.sections.length ? storeState.sections[0].id : null;
+    renderCatalogSections();
+
+    const items = await apiRequest(`/catalog?address_id=${encodeURIComponent(addressId)}`);
     storeState.items = items.map((item) => ({
       id: item.id,
       name: item.name,
       price: item.price,
+      section_id: item.section_id ?? null,
       image_path: item.image_path,
+      images: Array.isArray(item.images) ? item.images : [],
+      image_idx: 0,
       qty: 0,
     }));
     renderCatalog();
@@ -45,6 +55,34 @@ async function selectStoreAddress(addressId, addressName) {
     console.error('Ошибка загрузки каталога:', error);
     showStoreNotification('Ошибка загрузки каталога. Попробуйте позже.');
   }
+}
+
+function renderCatalogSections() {
+  const wrap = document.getElementById('catalog-sections');
+  if (!wrap) return;
+
+  const sections = Array.isArray(storeState.sections) ? storeState.sections : [];
+  if (!sections.length) {
+    wrap.innerHTML = '';
+    wrap.style.display = 'none';
+    return;
+  }
+
+  wrap.style.display = 'flex';
+  wrap.innerHTML = '';
+
+  sections.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'catalog-section-chip' + (storeState.selectedSectionId === s.id ? ' active' : '');
+    btn.textContent = String(s.name || '');
+    btn.onclick = () => {
+      storeState.selectedSectionId = s.id;
+      renderCatalogSections();
+      renderCatalog();
+    };
+    wrap.appendChild(btn);
+  });
 }
 
 function updateCartBadge() {
@@ -64,7 +102,15 @@ function renderCatalog() {
   const list = document.getElementById('catalog-list');
   list.innerHTML = '';
 
-  storeState.items.forEach((item, index) => {
+  const selectedSectionId = storeState.selectedSectionId;
+  const visibleItems = (Array.isArray(storeState.items) ? storeState.items : [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      if (!selectedSectionId) return true;
+      return Number(item.section_id) === Number(selectedSectionId);
+    });
+
+  visibleItems.forEach(({ item, index }) => {
     const card = document.createElement('div');
     card.className = 'catalog-item';
 
@@ -72,8 +118,17 @@ function renderCatalog() {
     imgWrapper.className = 'catalog-image-wrapper';
     const img = document.createElement('img');
     img.className = 'catalog-image';
-    img.src = item.image_path;
+    const currentPath = (Array.isArray(item.images) && item.images.length)
+      ? (item.images[item.image_idx] || item.images[0])
+      : (item.image_path || '');
+    img.src = currentPath;
     img.alt = item.name;
+    img.onclick = () => {
+      if (Array.isArray(item.images) && item.images.length > 1) {
+        item.image_idx = (item.image_idx + 1) % item.images.length;
+        renderCatalog();
+      }
+    };
     imgWrapper.appendChild(img);
 
     const info = document.createElement('div');
@@ -166,7 +221,10 @@ function renderCart() {
     imgWrapper.className = 'cart-item-image-wrapper';
     const img = document.createElement('img');
     img.className = 'cart-item-image';
-    img.src = item.image_path;
+    const p = (Array.isArray(item.images) && item.images.length)
+      ? (item.images[item.image_idx] || item.images[0])
+      : (item.image_path || '');
+    img.src = p;
     img.alt = item.name;
     imgWrapper.appendChild(img);
 

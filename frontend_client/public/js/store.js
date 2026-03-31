@@ -2,6 +2,8 @@ const storeState = {
   addressId: null,
   addressName: '',
   items: [],
+  sections: [],
+  selectedSectionId: null,
   checkoutItems: [],
 };
 
@@ -15,6 +17,19 @@ const STORE_IMG_BASE =
 function buildCatalogImageUrl(imagePath) {
   if (!imagePath) return '';
   return STORE_IMG_BASE + encodeURI(imagePath);
+}
+
+function firstImagePath(item) {
+  const imgs = Array.isArray(item.images) ? item.images.filter(Boolean) : [];
+  if (imgs.length) return imgs[0];
+  return item.image_path || '';
+}
+
+function nextImageIndex(item, currentIndex) {
+  const imgs = Array.isArray(item.images) ? item.images.filter(Boolean) : [];
+  if (!imgs.length) return 0;
+  const idx = Number.isFinite(currentIndex) ? currentIndex : 0;
+  return (idx + 1) % imgs.length;
 }
 
 async function initStore() {
@@ -40,30 +55,61 @@ async function selectStoreAddress(addressId, addressName) {
   storeState.addressName = addressName;
 
   const label = document.getElementById('catalog-address-label');
-  label.textContent = `Заказ цветов в ${addressName}`;
+  label.textContent = `Заказ в ${addressName}`;
 
   try {
-    const items = await apiRequest('/catalog');
-    // #region agent log
-    const item55 = (items || []).find(function(i){ return i.id === 55; });
-    var _base = (window.__IMG_BASE_URL__ && window.__IMG_BASE_URL__.trim()) ? window.__IMG_BASE_URL__.replace(/\/$/, '') : 'https://fromperiod.ru';
-    var _url55 = item55 ? _base + encodeURI(item55.image_path || '') : '';
-    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'store.js:selectStoreAddress',message:'catalog items and image URL for 55',data:{itemCount:(items||[]).length,has55:!!item55,item55:item55?{id:item55.id,name:item55.name,image_path:item55.image_path}:null,imgBase:_base,builtUrl55:_url55,origin:window.location.origin},timestamp:Date.now(),hypothesisId:'B,C'})}).catch(function(){});
-    // #endregion
+    const sections = await apiRequest(`/catalog/sections?address_id=${encodeURIComponent(addressId)}`);
+    storeState.sections = Array.isArray(sections) ? sections : [];
+    storeState.selectedSectionId = storeState.sections.length ? storeState.sections[0].id : null;
+    renderCatalogSections();
+
+    const items = await apiRequest(`/catalog?address_id=${encodeURIComponent(addressId)}`);
     // image_path храним как относительный путь из БД (/elements/...), а полный URL собираем при отрисовке
     storeState.items = items.map((item) => ({
       id: item.id,
       name: item.name,
       price: item.price,
+      section_id: item.section_id ?? null,
       image_path: item.image_path,
+      images: Array.isArray(item.images) ? item.images : [],
+      image_idx: 0,
       qty: 0,
     }));
     renderCatalog();
     showScreen('catalog-screen');
   } catch (error) {
     console.error('Ошибка загрузки каталога:', error);
-    showStoreNotification('Ошибка загрузки каталога. Попробуйте позже.');
+    const details = (error && error.message) ? String(error.message) : '';
+    showStoreNotification(details ? `Ошибка загрузки каталога: ${details}` : 'Ошибка загрузки каталога. Попробуйте позже.');
   }
+}
+
+function renderCatalogSections() {
+  const wrap = document.getElementById('catalog-sections');
+  if (!wrap) return;
+
+  const sections = Array.isArray(storeState.sections) ? storeState.sections : [];
+  if (!sections.length) {
+    wrap.innerHTML = '';
+    wrap.style.display = 'none';
+    return;
+  }
+
+  wrap.style.display = 'flex';
+  wrap.innerHTML = '';
+
+  sections.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'catalog-section-chip' + (storeState.selectedSectionId === s.id ? ' active' : '');
+    btn.textContent = String(s.name || '');
+    btn.onclick = () => {
+      storeState.selectedSectionId = s.id;
+      renderCatalogSections();
+      renderCatalog();
+    };
+    wrap.appendChild(btn);
+  });
 }
 
 function updateCartBadge() {
@@ -83,7 +129,15 @@ function renderCatalog() {
   const list = document.getElementById('catalog-list');
   list.innerHTML = '';
 
-  storeState.items.forEach((item, index) => {
+  const selectedSectionId = storeState.selectedSectionId;
+  const visibleItems = (Array.isArray(storeState.items) ? storeState.items : [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      if (!selectedSectionId) return true;
+      return Number(item.section_id) === Number(selectedSectionId);
+    });
+
+  visibleItems.forEach(({ item, index }) => {
     const card = document.createElement('div');
     card.className = 'catalog-item';
 
@@ -91,11 +145,17 @@ function renderCatalog() {
     imgWrapper.className = 'catalog-image-wrapper';
     const img = document.createElement('img');
     img.className = 'catalog-image';
-    img.src = buildCatalogImageUrl(item.image_path);
-    // #region agent log
-    if (item.id === 55) fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6db2c2'},body:JSON.stringify({sessionId:'6db2c2',location:'store.js:renderCatalog',message:'img src for item 55',data:{itemId:item.id,image_path:item.image_path,src:img.src},timestamp:Date.now(),hypothesisId:'C,E'})}).catch(function(){});
-    // #endregion
+    const currentPath = (Array.isArray(item.images) && item.images.length)
+      ? (item.images[item.image_idx] || item.images[0])
+      : (item.image_path || '');
+    img.src = buildCatalogImageUrl(currentPath);
     img.alt = item.name;
+    img.onclick = () => {
+      if (Array.isArray(item.images) && item.images.length > 1) {
+        item.image_idx = nextImageIndex(item, item.image_idx);
+        renderCatalog();
+      }
+    };
     imgWrapper.appendChild(img);
 
     const info = document.createElement('div');
@@ -188,7 +248,10 @@ function renderCart() {
     imgWrapper.className = 'cart-item-image-wrapper';
     const img = document.createElement('img');
     img.className = 'cart-item-image';
-    img.src = buildCatalogImageUrl(item.image_path);
+    const p = (Array.isArray(item.images) && item.images.length)
+      ? (item.images[item.image_idx] || item.images[0])
+      : (item.image_path || '');
+    img.src = buildCatalogImageUrl(p);
     img.alt = item.name;
     imgWrapper.appendChild(img);
 

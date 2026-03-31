@@ -33,34 +33,37 @@ export default function StorePage() {
         </div>
 
         <div id="catalog-screen" className="screen">
-          <div className="catalog-top-row">
-            <button
-              className="btn btn-back catalog-back-button"
-              onClick={() =>
-                window.goBackToStoreMain && window.goBackToStoreMain()
-              }
-            >
-              <img src="/back.png" alt="Назад" className="catalog-back-icon" />
-            </button>
-            <img src="/logo.png" alt="PERIOD" className="catalog-logo" />
-            <button
-              className="cart-button"
-              onClick={() => window.openCart && window.openCart()}
-            >
-              <span id="cart-count-badge" className="cart-count-badge" style={{ display: "none" }}></span>
-              <img
-                src="/pocket.png"
-                alt="Корзина"
-                style={{ width: "20px", height: "20px" }}
-              />
-            </button>
-          </div>
-          <div className="catalog-divider"></div>
-          <div className="catalog-title-row">
-            <h2 id="catalog-title" className="catalog-title">
-              Каталог
-            </h2>
-            <div className="catalog-address-chip" id="catalog-address-label"></div>
+          <div className="catalog-sticky">
+            <div className="catalog-top-row">
+              <button
+                className="btn btn-back catalog-back-button"
+                onClick={() =>
+                  window.goBackToStoreMain && window.goBackToStoreMain()
+                }
+              >
+                <img src="/back.png" alt="Назад" className="catalog-back-icon" />
+              </button>
+              <img src="/logo.png" alt="PERIOD" className="catalog-logo" />
+              <button
+                className="cart-button"
+                onClick={() => window.openCart && window.openCart()}
+              >
+                <span id="cart-count-badge" className="cart-count-badge" style={{ display: "none" }}></span>
+                <img
+                  src="/pocket.png"
+                  alt="Корзина"
+                  style={{ width: "20px", height: "20px" }}
+                />
+              </button>
+            </div>
+            <div className="catalog-divider"></div>
+            <div className="catalog-title-row">
+              <h2 id="catalog-title" className="catalog-title">
+                Каталог
+              </h2>
+              <div className="catalog-address-chip" id="catalog-address-label"></div>
+            </div>
+            <div id="catalog-sections" className="catalog-sections" style={{ display: "none" }}></div>
           </div>
           <div id="catalog-list" className="catalog-list"></div>
         </div>

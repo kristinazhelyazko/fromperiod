@@ -104,7 +104,7 @@ async function handleDeleteUserPrompt(bot, msg, targetUserId) {
       await bot.sendMessage(chatId, '❌ У вас нет прав для выполнения этого действия.');
       return;
     }
-    await bot.sendMessage(chatId, 'Подтвердите удаление пользователя:', getDeleteConfirmKeyboard(parseInt(targetUserId, 10)));
+    await bot.sendMessage(chatId, 'Вы точно хотите выполнить действие?', getDeleteConfirmKeyboard(parseInt(targetUserId, 10)));
   } catch (error) {
     logger.error('handleDeleteUserPrompt', error);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');

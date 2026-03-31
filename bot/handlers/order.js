@@ -13,6 +13,7 @@ const {
   getYesNoKeyboard,
   getPaymentStatusKeyboard,
   getInterruptOrderKeyboard,
+  getConfirmKeyboard,
 } = require('../keyboards');
 const orderService = require('../../services/orderService');
 const {
@@ -1270,8 +1271,47 @@ async function handleCallback(bot, ctx, data) {
         recipient_address: o.recipient_address || '',
       };
       await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details, photos, contacts, order_id: id, order_number: o.number });
-    } else if (data.startsWith('order_complete_')) {
-      const id = parseInt(data.replace('order_complete_', ''), 10);
+    } else if (data.startsWith('order_complete_no_')) {
+      const id = parseInt(data.replace('order_complete_no_', ''), 10);
+      if (!Number.isFinite(id)) {
+        await bot.sendMessage(chatId, '❌ Некорректный номер заказа.');
+        return;
+      }
+      await bot.sendMessage(chatId, 'Действие отменено.');
+      try {
+        const o = await orderService.getOrderWithDetails(id);
+        if (o) {
+          const draft = {
+            fulfillment_type: o.fulfillment_type,
+            store_name: o.address_name,
+            execution_date: o.execution_date,
+            execution_time: o.execution_time,
+            execution_time_to: o.execution_time_to,
+            order_type: o.order_type_name,
+            creator_name: o.creator_full_name || '',
+            cost: o.cost,
+            total_cost: o.total_cost,
+            paid_amount: o.paid_amount,
+            payment_status_id: o.payment_status_id,
+            delivery_cost: o.delivery_cost,
+            total_delivery_cost: o.total_delivery_cost,
+            order_source: o.order_source,
+          };
+          const details = o.details || {};
+          const photos = Array.isArray(o.photos) ? o.photos : [];
+          const contacts = {
+            client_name: o.client_name || '',
+            client_phone: o.client_phone || '',
+            recipient_name: o.recipient_name || '',
+            recipient_phone: o.recipient_phone || '',
+            recipient_address: o.recipient_address || '',
+          };
+          await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details, photos, contacts, order_id: id, order_number: o.number });
+        }
+      } catch (_) {}
+      return;
+    } else if (data.startsWith('order_complete_yes_')) {
+      const id = parseInt(data.replace('order_complete_yes_', ''), 10);
       const oComplete = await orderService.getOrderWithDetails(id);
       if (!oComplete) {
         await bot.sendMessage(chatId, 'Заказ не найден.');
@@ -1287,6 +1327,20 @@ async function handleCallback(bot, ctx, data) {
         setUserState(userId, 'authenticated', { user: userComplete, auth_expires_at: Date.now() + 30 * 60 * 1000 });
         await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(userComplete.rights_name));
       }
+      return;
+    } else if (data.startsWith('order_complete_')) {
+      const id = parseInt(data.replace('order_complete_', ''), 10);
+      const oComplete = await orderService.getOrderWithDetails(id);
+      if (!oComplete) {
+        await bot.sendMessage(chatId, 'Заказ не найден.');
+        return;
+      }
+      await bot.sendMessage(
+        chatId,
+        'Вы точно хотите выполнить действие?',
+        getConfirmKeyboard(`order_complete_yes_${id}`, `order_complete_no_${id}`)
+      );
+      return;
     } else if (data.startsWith('order_assembled_')) {
       const id = parseInt(data.replace('order_assembled_', ''), 10);
       const current = await orderService.getOrderWithDetails(id);
@@ -1399,12 +1453,33 @@ async function handleCallback(bot, ctx, data) {
         setUserState(userId, 'authenticated', { user: userAssembled, auth_expires_at: Date.now() + 30 * 60 * 1000 });
         await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(userAssembled.rights_name));
       }
-    } else if (data.startsWith('order_cancel_')) {
-      const id = parseInt(data.replace('order_cancel_', ''), 10);
+    } else if (data.startsWith('order_cancel_no_')) {
+      await bot.sendMessage(chatId, 'Действие отменено.');
+      try {
+        const rightsName = st.data.user.rights_name;
+        await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
+      } catch (_) {}
+      return;
+    } else if (data.startsWith('order_cancel_yes_')) {
+      const id = parseInt(data.replace('order_cancel_yes_', ''), 10);
       const order = await orderService.getOrderWithDetails(id);
       const num = order ? (order.number || id) : id;
       await orderService.cancelOrder(id);
       await bot.sendMessage(chatId, `Заказ №${num} отменен. Напоминания по нему отключены.`);
+      return;
+    } else if (data.startsWith('order_cancel_')) {
+      const id = parseInt(data.replace('order_cancel_', ''), 10);
+      const order = await orderService.getOrderWithDetails(id);
+      if (!order) {
+        await bot.sendMessage(chatId, 'Заказ не найден.');
+        return;
+      }
+      await bot.sendMessage(
+        chatId,
+        'Вы точно хотите выполнить действие?',
+        getConfirmKeyboard(`order_cancel_yes_${id}`, `order_cancel_no_${id}`)
+      );
+      return;
     } else if (data === 'order_boutonniere_yes' || data === 'order_boutonniere_no') {
       const st2 = getUserState(userId);
       const det = st2.data.details || {};
@@ -1625,37 +1700,88 @@ async function handleCallback(bot, ctx, data) {
     } else if (data === 'order_edit_photos_delete') {
       const st2 = getUserState(userId);
       const oid = st2.data.order_id;
-      await orderService.deleteOrderPhotos(oid);
-      setUserState(userId, 'order_edit_photos_add_wait', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: [], contacts: st2.data.contacts, order_id: oid });
-      await bot.sendMessage(chatId, 'Отправьте новые фотографии до 3 штук. Когда будете готовы — нажмите "Далее".', getNextKeyboard());
+      await bot.sendMessage(
+        chatId,
+        'Вы точно хотите выполнить действие?',
+        getConfirmKeyboard(`order_edit_photos_delete_yes_${oid}`, `order_edit_photos_delete_no_${oid}`)
+      );
     } else if (data === 'order_edit_photos_add') {
       const st2 = getUserState(userId);
       setUserState(userId, 'order_edit_photos_add_wait', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: st2.data.photos || [], contacts: st2.data.contacts, order_id: st2.data.order_id });
       await bot.sendMessage(chatId, 'Отправьте новое фото. Лимит — до 3 фото по заказу. Когда будете готовы — нажмите "Далее".', getNextKeyboard());
+    } else if (data.startsWith('order_edit_photos_delete_no_')) {
+      await bot.sendMessage(chatId, 'Действие отменено.');
+      const st2 = getUserState(userId);
+      setUserState(userId, 'order_edit_photos_menu', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: st2.data.photos, contacts: st2.data.contacts, order_id: st2.data.order_id });
+      const kb = { reply_markup: { inline_keyboard: [
+        [{ text: '🗑️ Удалить фотографии по заказу', callback_data: 'order_edit_photos_delete' }],
+        [{ text: '➕ Добавить фото дополнительно', callback_data: 'order_edit_photos_add' }],
+        [{ text: '⬅️ Назад', callback_data: 'order_edit_back' }],
+        [{ text: '❌ Отмена', callback_data: 'cancel' }],
+      ] } };
+      await bot.sendMessage(chatId, 'Выберите необходиоме действие', kb);
+    } else if (data.startsWith('order_edit_photos_delete_yes_')) {
+      const st2 = getUserState(userId);
+      const oid = st2.data.order_id;
+      await orderService.deleteOrderPhotos(oid);
+      setUserState(userId, 'order_edit_photos_add_wait', { user: st2.data.user, draft: st2.data.draft, details: st2.data.details, photos: [], contacts: st2.data.contacts, order_id: oid });
+      await bot.sendMessage(chatId, 'Отправьте новые фотографии до 3 штук. Когда будете готовы — нажмите "Далее".', getNextKeyboard());
     } else if (data === 'order_edit') {
       const kb = buildEditKeyboardFromState(st.data);
       setUserState(userId, 'order_edit_select', { user: st.data.user, draft: st.data.draft, details: st.data.details, photos: st.data.photos, contacts: st.data.contacts, order_id: st.data.order_id });
       await bot.sendMessage(chatId, 'Выберите деталь для изменения:', kb);
+    } else if (data.startsWith('order_delete_no_')) {
+      await bot.sendMessage(chatId, 'Действие отменено.');
+      try {
+        const rightsName = st.data.user.rights_name;
+        await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
+      } catch (_) {}
+    } else if (data.startsWith('order_delete_yes_')) {
+      const id = parseInt(data.replace('order_delete_yes_', ''), 10);
+      if (!Number.isFinite(id)) {
+        await bot.sendMessage(chatId, '❌ Некорректный номер заказа для удаления.');
+        return;
+      }
+      try {
+        const order = await orderService.getOrderWithDetails(id);
+        const num = order ? (order.number || id) : id;
+        await orderService.deleteOrder(id);
+        clearUserState(userId);
+        setUserState(userId, 'authenticated', { user: st.data.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
+        await bot.sendMessage(chatId, `🗑️ Заказ №${num} удален.`);
+        const rightsName = st.data.user.rights_name;
+        await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
+      } catch (e) {
+        logger.error('Delete order error', e);
+        await bot.sendMessage(chatId, '❌ Не удалось удалить заказ. Попробуйте позже.');
+      }
     } else if (data.startsWith('order_delete_')) {
       const id = parseInt(data.replace('order_delete_', ''), 10);
       if (Number.isFinite(id)) {
-        try {
-          const order = await orderService.getOrderWithDetails(id);
-          const num = order ? (order.number || id) : id;
-          await orderService.deleteOrder(id);
-          clearUserState(userId);
-          setUserState(userId, 'authenticated', { user: st.data.user, auth_expires_at: Date.now() + 30 * 60 * 1000 });
-          await bot.sendMessage(chatId, `🗑️ Заказ №${num} удален.`);
-          const rightsName = st.data.user.rights_name;
-          await bot.sendMessage(chatId, '📋 Главное меню:', getMainMenuKeyboard(rightsName));
-        } catch (e) {
-          logger.error('Delete order error', e);
-          await bot.sendMessage(chatId, '❌ Не удалось удалить заказ. Попробуйте позже.');
-        }
+        await bot.sendMessage(
+          chatId,
+          'Вы точно хотите выполнить действие?',
+          getConfirmKeyboard(`order_delete_yes_${id}`, `order_delete_no_${id}`)
+        );
       } else {
         await bot.sendMessage(chatId, '❌ Некорректный номер заказа для удаления.');
       }
     } else if (data === 'interrupt_order_delete') {
+      const st2 = getUserState(userId);
+      const orderId = st2.data.order_id;
+      if (orderId) {
+        await bot.sendMessage(
+          chatId,
+          'Вы точно хотите выполнить действие?',
+          getConfirmKeyboard(`interrupt_order_delete_yes_${orderId}`, `interrupt_order_delete_no_${orderId}`)
+        );
+      } else {
+        await bot.sendMessage(chatId, '❌ Некорректный номер заказа для удаления.');
+      }
+    } else if (data.startsWith('interrupt_order_delete_no_')) {
+      await bot.sendMessage(chatId, 'Действие отменено.');
+      await bot.sendMessage(chatId, 'Продолжим оформление заказа.', getInterruptOrderKeyboard());
+    } else if (data.startsWith('interrupt_order_delete_yes_')) {
       const st2 = getUserState(userId);
       const orderId = st2.data.order_id;
       try {
@@ -2098,34 +2224,6 @@ async function handleOrderMessage(bot, msg) {
         await bot.sendMessage(chatId, `❌ ${res.message}\n${prompt}`);
         return;
       }
-      // #region agent log
-      try {
-        fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Debug-Session-Id': '6db2c2',
-          },
-          body: JSON.stringify({
-            sessionId: '6db2c2',
-            runId: 'pre-fix',
-            hypothesisId: 'H1,H2,H3',
-            location: 'order.js:order_edit_total_cost',
-            message: 'Edit total cost for order',
-            data: {
-              orderId: st.data.order_id,
-              number: (st.data.draft && st.data.draft.number) || null,
-              fulfillment_type: ft,
-              old_total_cost: draft.total_cost ?? null,
-              new_total_cost: res.value,
-              payment_status_name: draft.payment_status_name || null,
-              old_paid_amount: draft.paid_amount ?? null,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-      } catch (_) {}
-      // #endregion
       draft.total_cost = res.value;
       // Для заказов из интернет-магазина синхронизируем также базовую стоимость позиции
       if (draft.order_source === 1) {
@@ -2190,33 +2288,6 @@ async function handleOrderMessage(bot, msg) {
         return;
       }
       const draft = st.data.draft || {};
-      // #region agent log
-      try {
-        fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Debug-Session-Id': '6db2c2',
-          },
-          body: JSON.stringify({
-            sessionId: '6db2c2',
-            runId: 'pre-fix',
-            hypothesisId: 'H2,H3',
-            location: 'order.js:order_edit_paid_amount',
-            message: 'Edit paid amount for order',
-            data: {
-              orderId: st.data.order_id,
-              number: (st.data.draft && st.data.draft.number) || null,
-              total_cost: draft.total_cost ?? null,
-              old_paid_amount: draft.paid_amount ?? null,
-              new_paid_amount: res.value,
-              payment_status_name: draft.payment_status_name || null,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-      } catch (_) {}
-      // #endregion
       draft.paid_amount = res.value;
       await showConfirm(bot, userId, chatId, { user: st.data.user, draft, details: st.data.details, photos: st.data.photos, contacts: st.data.contacts, card_photo: st.data.card_photo || null, order_id: st.data.order_id });
     } else if (st.state === 'order_edit_date') {
@@ -2255,35 +2326,6 @@ async function handleOrderMessage(bot, msg) {
 function buildSummary(draft, details, photos, contacts, cardPhoto, orderId, typeCalled, orderNumber) {
   const lines = [];
   const displayNum = (orderNumber != null && orderNumber !== '') ? orderNumber : (orderId != null ? orderId : null);
-  // #region agent log
-  try {
-    fetch('http://localhost:7513/ingest/df5f1387-b3a2-499c-ab13-f5d5496e92a7', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': '6db2c2',
-      },
-      body: JSON.stringify({
-        sessionId: '6db2c2',
-        runId: 'pre-fix',
-        hypothesisId: 'H1,H2,H3',
-        location: 'order.js:buildSummary',
-        message: 'Building order summary',
-        data: {
-          orderId,
-          orderNumber: displayNum,
-          fulfillment_type: draft.fulfillment_type || null,
-          total_cost: draft.total_cost ?? null,
-          delivery_cost: draft.delivery_cost ?? null,
-          total_delivery_cost: draft.total_delivery_cost ?? null,
-          paid_amount: draft.paid_amount ?? null,
-          payment_status_name: draft.payment_status_name || null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  } catch (_) {}
-  // #endregion
   if (displayNum != null && displayNum !== '') {
     lines.push(`Итоговый заказ №${displayNum}:`);
   } else {

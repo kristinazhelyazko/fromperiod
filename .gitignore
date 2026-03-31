@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.*.bak
 *.local.bak
+*.bak
 *.log
 .DS_Store
 dist/
@@ -27,6 +28,7 @@ exports/
 exports_bak_*/
 exports_local_backup_*/
 local_before_test_pstock.patch
+"new elements"/
 
 # Устаревший дубликат Next (раньше submodule); при необходимости — отдельный репозиторий
 frontend/

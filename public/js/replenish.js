@@ -195,6 +195,9 @@ function updateReplenishName(index, value) {
 
 // Удаление позиции
 function removeReplenishItem(index) {
+    if (!window.confirm('Вы точно хотите выполнить действие?')) {
+        return;
+    }
     appState.replenish.items.splice(index, 1);
     renderReplenishTable();
 }

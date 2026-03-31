@@ -25,23 +25,25 @@
         </div>
 
         <div id="catalog-screen" class="screen">
-            <div class="catalog-top-row">
-                <button class="btn btn-back catalog-back-button" onclick="goBackToStoreMain()">
-                    <img src="back.png" alt="Назад" class="catalog-back-icon">
-                </button>
-                <img src="logo.png" alt="PERIOD" class="catalog-logo">
-                <button class="cart-button" onclick="openCart()">
-                    <span id="cart-count-badge" class="cart-count-badge"></span>
-                    <img src="pocket.png" alt="Корзина" style="width: 20px; height: 20px;">
-                </button>
+            <div class="catalog-sticky">
+                <div class="catalog-top-row">
+                    <button class="btn btn-back catalog-back-button" onclick="goBackToStoreMain()">
+                        <img src="back.png" alt="Назад" class="catalog-back-icon">
+                    </button>
+                    <img src="logo.png" alt="PERIOD" class="catalog-logo">
+                    <button class="cart-button" onclick="openCart()">
+                        <span id="cart-count-badge" class="cart-count-badge"></span>
+                        <img src="pocket.png" alt="Корзина" style="width: 20px; height: 20px;">
+                    </button>
+                </div>
+                <div class="catalog-divider"></div>
+                <div class="catalog-title-row">
+                    <h2 id="catalog-title" class="catalog-title">Каталог</h2>
+                    <div class="catalog-address-chip" id="catalog-address-label"></div>
+                </div>
+                <div id="catalog-sections" class="catalog-sections" style="display:none;"></div>
             </div>
-            <div class="catalog-divider"></div>
-            <div class="catalog-title-row">
-                <h2 id="catalog-title" class="catalog-title">Каталог</h2>
-                <div class="catalog-address-chip" id="catalog-address-label"></div>
-            </div>
-            <div id="catalog-list" class="catalog-list">
-            </div>
+            <div id="catalog-list" class="catalog-list"></div>
         </div>
 
         <div id="cart-screen" class="screen">

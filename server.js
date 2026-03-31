@@ -29,12 +29,20 @@ app.use(cors({
   },
   credentials: true
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files
 app.use(express.static('public'));
-app.use('/elements', express.static('elements'));
+app.use('/elements', (req, res, next) => {
+  // Elements are updated at runtime by the employee bot (no rebuild).
+  // Use filenames as cache keys; avoid aggressive caching in Telegram WebApp.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+}, express.static('elements'));
 
 app.get('/home.png', (req, res, next) => {
   const filePath = path.join(__dirname, 'home.png');
